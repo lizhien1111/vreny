@@ -1,6 +1,6 @@
 /**
  * Phone page API workflow builders.
- * Lustify Krea Turbo / Moss Image bf16 / WAI & Hassaku (Illustrious SDXL).
+ * Lustify Krea Turbo / Moss Image bf16 + Qwen bf16 TE + full VAE / WAI & Hassaku (Illustrious SDXL).
  */
 (function (root) {
   const LUSTIFY = {
@@ -20,8 +20,8 @@
     id: "moss",
     label: "Moss Image bf16",
     unet: "moss_image_sft_bf16.safetensors",
-    clip: "qwen3.5_9b_w4a8_gptq.safetensors",
-    vae: "flux2-vae_small.safetensors",
+    clip: "qwen3.5_9b_bf16.safetensors",
+    vae: "flux2-vae.safetensors",
     defaults: { steps: 25, cfg: 2.5, width: 1024, height: 1024, sampler: "er_sde", scheduler: "simple" },
     neg: "",
   };
