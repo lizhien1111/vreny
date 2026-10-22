@@ -2513,6 +2513,50 @@
     }
   }
 
+
+  function currentModelId() {
+    const el = $("modelSelect");
+    const v = (el && el.value) || localStorage.getItem(LS_MODEL) || "lustify";
+    return String(v).toLowerCase();
+  }
+
+  function applyModelPreset(modelId, opts) {
+    opts = opts || {};
+    const W = window.ComfyPhoneWorkflow;
+    if (!W || !W.getPreset) return;
+    const preset = W.getPreset(modelId);
+    if (!preset || !preset.defaults) return;
+    const d = preset.defaults;
+    const fillEmptyNeg = opts.fillEmptyNeg !== false;
+    if ($("steps")) $("steps").value = String(d.steps);
+    if ($("width")) $("width").value = String(d.width);
+    if ($("height")) $("height").value = String(d.height);
+    if ($("negative") && (fillEmptyNeg || !($("negative").value || "").trim())) {
+      $("negative").value = preset.neg || "";
+      $("negative").placeholder = preset.neg
+        ? "默认已按模型填入，可改"
+        : "Moss 通常留空；可按需写负面";
+    }
+    // cfg is hardcoded per model in generate; store on select dataset
+    const sel = $("modelSelect");
+    if (sel) sel.dataset.cfg = String(d.cfg);
+  }
+
+  function initModelSelect() {
+    const sel = $("modelSelect");
+    if (!sel) return;
+    const saved = localStorage.getItem(LS_MODEL) || "lustify";
+    if ([].some.call(sel.options, function (o) { return o.value === saved; })) {
+      sel.value = saved;
+    }
+    applyModelPreset(sel.value, { fillEmptyNeg: !($("negative") && ($("negative").value || "").trim()) });
+    sel.addEventListener("change", function () {
+      localStorage.setItem(LS_MODEL, sel.value);
+      applyModelPreset(sel.value, { fillEmptyNeg: true });
+      setStatus("已切到 " + (sel.options[sel.selectedIndex].text || sel.value) + " · 参数已按默认填入", "ok");
+    });
+  }
+
   async function generate() {
     if (running) return;
     const prompt = ($("prompt").value || "").trim();
@@ -2543,7 +2587,15 @@
     if (!Number.isFinite(batch) || batch < 1) batch = 1;
     if (batch > 20) batch = 20;
     if ($("batch")) $("batch").value = String(batch);
-    const negative = ($("negative").value || "").trim() || (W && W.DEFAULT_NEG) || "";
+    const modelId = currentModelId();
+    const preset = (W && W.getPreset && W.getPreset(modelId)) || null;
+    const defaultNeg = (preset && preset.neg != null) ? preset.neg : ((W && W.DEFAULT_NEG) || "");
+    const negative = ($("negative").value || "").trim() || defaultNeg;
+    const cfgDefault = preset && preset.defaults ? preset.defaults.cfg : 1.0;
+    const cfgEl = $("modelSelect");
+    const cfg = (cfgEl && cfgEl.dataset.cfg != null && cfgEl.dataset.cfg !== "")
+      ? Number(cfgEl.dataset.cfg)
+      : cfgDefault;
 
     try {
       requireBase();
@@ -2600,8 +2652,9 @@
             width,
             height,
             seed,
-            cfg: 1.0,
-            prefix: "phone_" + seed,
+            cfg: Number.isFinite(cfg) ? cfg : cfgDefault,
+            model: modelId,
+            prefix: (modelId || "phone") + "_" + seed,
           });
         }
 
@@ -2695,6 +2748,7 @@
   const LS_RP_PORT = "comfy_phone_runpod_port";
   const LS_RP_PROXY = "comfy_phone_runpod_proxy";
   const LS_PROVIDER = "comfy_phone_provider";
+  const LS_MODEL = "comfy_phone_model";
 
   function setRunpodStatus(msg, kind) {
     const el = $("runpodStatus");
@@ -3322,6 +3376,7 @@
     // Always start on boot so user can reconnect / open Comfy
     showPage("boot");
     bindPngImport();
+    initModelSelect();
     $("btnGen").addEventListener("click", generate);
     if ($("btnCancel")) $("btnCancel").addEventListener("click", cancelTask);
     $("btnSave").addEventListener("click", saveImage);

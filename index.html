@@ -61,6 +61,20 @@
     input[type="text"],
     input[type="number"],
     input[type="text"],
+    select,
+    #modelSelect {
+      width: 100%;
+      min-height: var(--tap);
+      padding: 10px 12px;
+      border-radius: 12px;
+      border: 1px solid var(--line);
+      background: var(--card);
+      color: var(--text);
+      font-size: 1rem;
+      margin: 0 0 12px;
+      -webkit-appearance: none;
+      appearance: none;
+    }
     textarea {
       width: 100%;
       background: var(--card);
@@ -770,6 +784,14 @@
       <p class="png-import-hint" id="pngImportHint">可从相册或「文件」选任意外部 Comfy PNG（本页以外保存的也行）。读取内嵌 prompt / workflow，填入提示词与参数；非本页 Lustify 完整图可按原工作流出图。若点了没弹出，请用 Safari 打开本页，或从「文件」选原图 PNG。</p>
     </div>
 
+    <label for="modelSelect">模型</label>
+    <select id="modelSelect" class="notranslate" translate="no">
+      <option value="lustify">Lustify Krea Turbo</option>
+      <option value="moss">Moss Image bf16</option>
+      <option value="wai">WAI Illustrious</option>
+      <option value="hassaku">Hassaku Illustrious</option>
+    </select>
+
     <label for="prompt">提示词</label>
     <textarea id="prompt" placeholder="描述你想生成的画面…"></textarea>
 
@@ -862,10 +884,10 @@
     <div class="lightbox-info" id="lightboxInfo"></div>
   </div>
 
-  <script src="png-meta.js?v=png-import-20261017a"></script>
-  <script src="workflow.js?v=png-import-20261017a"></script>
-  <script src="gallery.js?v=png-import-20261017a"></script>
-  <script src="app.js?v=png-import-20261017a"></script>
+  <script src="png-meta.js?v=moss-20261022a"></script>
+  <script src="workflow.js?v=moss-20261022a"></script>
+  <script src="gallery.js?v=moss-20261022a"></script>
+  <script src="app.js?v=moss-20261022a"></script>
 
   <script>
     function googleTranslateElementInit() {
