@@ -1467,6 +1467,9 @@
 
     if (!items.length) {
       empty.hidden = false;
+      selectedGalleryIds.clear();
+      updateGallerySelMeta();
+      syncGallerySelectUi();
       return;
     }
     empty.hidden = true;
@@ -1536,11 +1539,16 @@
     const actions = $("gallerySelectActions");
     if (modeBtn) modeBtn.textContent = gallerySelectMode ? "完成" : "选择";
     if (actions) {
+      // Avoid display:contents — Safari often drops taps on children.
       if (gallerySelectMode) {
         actions.hidden = false;
-        actions.style.display = "contents";
+        actions.style.display = "flex";
+        actions.style.flex = "1 1 auto";
+        actions.style.flexWrap = "wrap";
+        actions.style.gap = "8px";
       } else {
         actions.hidden = true;
+        actions.style.display = "none";
       }
     }
     const grid = $("galleryGrid");
@@ -1914,26 +1922,28 @@
     const G = window.ComfyPhoneGallery;
     if (!G) return;
     if (!gallerySelectMode) {
-      setStatus("请先选择要删除的图片", "err");
+      setStatus("请先点「选择」，再勾选要删的图片", "err");
       return;
     }
-    const items = await getSelectedGalleryItems();
-    if (!items.length) {
-      setStatus("请先选择要删除的图片", "err");
+    const nSel = selectedGalleryIds.size;
+    if (!nSel) {
+      setStatus("请先勾选要删除的图片", "err");
       return;
     }
-    const n = items.length;
-    if (!confirm("确定删除选中的 " + n + " 张？")) return;
+    // confirm MUST stay synchronous (no await before it) — iOS Safari drops
+    // dialogs after an await and the delete looks like it did nothing.
+    if (!confirm("确定删除选中的 " + nSel + " 张？")) return;
+    const ids = Array.from(selectedGalleryIds);
     try {
-      for (const item of items) {
-        await G.deleteImage(item.id);
-        selectedGalleryIds.delete(item.id);
+      for (const id of ids) {
+        await G.deleteImage(id);
+        selectedGalleryIds.delete(id);
       }
-      if (lightboxItem && items.some((x) => x.id === lightboxItem.id)) {
+      if (lightboxItem && ids.indexOf(lightboxItem.id) >= 0) {
         closeLightbox();
       }
       await renderGallery();
-      setStatus("已删除 " + n + " 张", "ok");
+      setStatus("已删除 " + ids.length + " 张", "ok");
     } catch (e) {
       alert("删除失败: " + (e && e.message ? e.message : e));
     }

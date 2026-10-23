@@ -335,6 +335,15 @@
       font-size: 0.85rem;
       flex: 1 1 auto;
     }
+    .gallery-select-actions {
+      display: none;
+      flex: 1 1 auto;
+      flex-wrap: wrap;
+      gap: 8px;
+    }
+    .gallery-select-actions .btn {
+      flex: 1 1 auto;
+    }
 
 
     .upload-banner {
@@ -850,7 +859,7 @@
     <p class="gallery-meta" id="galleryMeta">本机保存 · 加载中…</p>
     <div class="gallery-toolbar" id="galleryToolbar">
       <button type="button" class="btn btn-ghost" id="btnGalSelectMode">选择</button>
-      <span id="gallerySelectActions" hidden style="display:contents">
+      <span id="gallerySelectActions" class="gallery-select-actions" hidden>
         <button type="button" class="btn btn-ghost" id="btnGalSelectAll">全选</button>
         <button type="button" class="btn btn-ghost" id="btnGalClearSel">取消勾选</button>
         <button type="button" class="btn btn-save" id="btnGalSaveAlbum" style="margin-top:0">存到相册</button>
@@ -884,10 +893,10 @@
     <div class="lightbox-info" id="lightboxInfo"></div>
   </div>
 
-  <script src="png-meta.js?v=moss-best-20261022b"></script>
-  <script src="workflow.js?v=moss-best-20261022b"></script>
-  <script src="gallery.js?v=moss-best-20261022b"></script>
-  <script src="app.js?v=moss-best-20261022b"></script>
+  <script src="png-meta.js?v=fix-del-20261023a"></script>
+  <script src="workflow.js?v=fix-del-20261023a"></script>
+  <script src="gallery.js?v=fix-del-20261023a"></script>
+  <script src="app.js?v=fix-del-20261023a"></script>
 
   <script>
     function googleTranslateElementInit() {
