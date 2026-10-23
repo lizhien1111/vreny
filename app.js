@@ -373,37 +373,6 @@
     }
   }
 
-  /** Shrink large PNGs for iOS IndexedDB / preview (keeps aspect). */
-  async function compressBlobIfLarge(blob, maxBytes) {
-    maxBytes = maxBytes || 1800 * 1024;
-    if (!blob || blob.size <= maxBytes) return blob;
-    try {
-      const bmp = await createImageBitmap(blob);
-      const maxEdge = 1600;
-      let w = bmp.width;
-      let h = bmp.height;
-      const m = Math.max(w, h);
-      if (m > maxEdge) {
-        const s = maxEdge / m;
-        w = Math.round(w * s);
-        h = Math.round(h * s);
-      }
-      const canvas = document.createElement("canvas");
-      canvas.width = w;
-      canvas.height = h;
-      const ctx = canvas.getContext("2d");
-      ctx.drawImage(bmp, 0, 0, w, h);
-      if (bmp.close) bmp.close();
-      const jpeg = await new Promise(function (resolve) {
-        canvas.toBlob(resolve, "image/jpeg", 0.82);
-      });
-      if (jpeg && jpeg.size > 0 && jpeg.size < blob.size) return jpeg;
-    } catch (e) {
-      console.warn("compress failed", e);
-    }
-    return blob;
-  }
-
   async function fetchImageBlob(img, timeoutMs) {
     const url = viewUrl(img);
     const ms = timeoutMs || 25000;
@@ -2081,13 +2050,31 @@
             const msgs = st.messages || [];
             for (let mi = 0; mi < msgs.length; mi++) {
               const m = msgs[mi];
-              if (m && m[1] && typeof m[1].timestamp ==      // newest first by Comfy history timestamps
+              if (m && m[1] && typeof m[1].timestamp === "number") {
+                if (m[1].timestamp > ts) ts = m[1].timestamp;
+              }
+            }
+            items.push({
+              img: img,
+              promptId: id,
+              createdAt: ts || Date.now(),
+              ts: ts || 0,
+            });
+          }
+        }
+      }
+
       items.sort(function (a, b) {
         return (b.ts || 0) - (a.ts || 0);
       });
 
       if (!items.length) {
-        setStatus("没有新照片：服务器历史 " + ids.length + " 条，均已在本机图库（看下方图库）或为空", "ok");
+        setStatus(
+          "没有新照片：服务器历史 " +
+            ids.length +
+            " 条，均已在本机图库（看下方图库）或为空",
+          "ok"
+        );
         await renderGallery();
         return;
       }
@@ -2100,13 +2087,12 @@
       const total = Math.min(items.length, maxPull);
       for (let i = 0; i < items.length && got < maxPull; i++) {
         const { img } = items[i];
-        setStatus("拉取中… " + (i + 1) + "/" + total + " · " + (img.filename || ""), "run");
+        setStatus(
+          "拉取中… " + (i + 1) + "/" + total + " · " + (img.filename || ""),
+          "run"
+        );
         try {
-          let { blob, filename, url } = await fetchImageBlob(img, 25000);
-          blob = await compressBlobIfLarge(blob);
-          if (filename && blob.type === "image/jpeg" && !/\.jpe?g$/i.test(filename)) {
-            filename = filename.replace(/\.png$/i, "") + "_phone.jpg";
-          }
+          const { blob, filename } = await fetchImageBlob(img, 45000);
           try {
             await saveToGallery({
               blob: blob,
@@ -2122,7 +2108,6 @@
               throwOnError: true,
             });
           } catch (saveErr) {
-            // still show preview even if IndexedDB full
             pullErrors.push(
               (img.filename || "") +
                 " 已下载但存图库失败: " +
@@ -2136,19 +2121,17 @@
             await maybeUploadToTelegram(blob, filename);
           } catch (_) {}
           have[filename] = true;
-          if (img.filename) have[img.filename] = true;
           lastBlobLocal = blob;
           lastName = filename;
           got++;
-          showImage(blob, filename || "pulled.jpg");
+          showImage(blob, filename || "pulled.png");
         } catch (e) {
           console.warn("pull skip", img.filename, e);
           const reason = e && e.message ? e.message : String(e);
-          const openUrl = viewUrl(img);
-          pullErrors.push((img.filename || "?") + ": " + reason + " → " + openUrl);
+          pullErrors.push((img.filename || "?") + ": " + reason);
         }
       }
-      if (lastBlobLocal) showImage(lastBlobLocal, lastName || "pulled.jpg");
+      if (lastBlobLocal) showImage(lastBlobLocal, lastName || "pulled.png");
       if (pullErrors.length) {
         setStatus(
           "已拉取 " +
@@ -2161,11 +2144,6 @@
             pullErrors.slice(0, 2).join(" ｜ "),
           got ? "ok" : "err"
         );
-      } else {
-        setStatus("已拉取 " + got + " 张新照片到图库", "ok");
-      }      if (lastBlobLocal) showImage(lastBlobLocal, lastName || "pulled.png");
-      if (pullErrors.length) {
-        setStatus("已拉取 " + got + " 张；失败 " + pullErrors.length + " 张 → " + pullErrors.slice(0, 2).join(" ｜ "), "err");
       } else {
         setStatus("已拉取 " + got + " 张新照片到图库", "ok");
       }
