@@ -42,7 +42,72 @@
     neg: "bad quality, worst quality, worst detail, sketch, censor, censored, mosaic, bar censor, loli, child, petite, young, flat chest, bad hands, extra fingers, bad anatomy",
   };
 
-  const PRESETS = { lustify: LUSTIFY, moss: MOSS, wai: WAI, hassaku: HASSAKU };
+  const KREA2SVR = {
+    id: "krea2svr",
+    label: "Krea2 + SeedVR2 7B 放大",
+    unet: "lustify-v10-krea-turbo-fp16.safetensors",
+    clip: "qwen3vl_4b_bf16.safetensors", // fp8_scaled on 420 is truncated
+    vae: "wan_2.1_vae.safetensors",
+    lora: "Krea2-realism-V2.safetensors",
+    loraStrength: 0.7,
+    dit: "seedvr2_ema_7b_fp8_e4m3fn_mixed_block35_fp16.safetensors",
+    svrVae: "ema_vae_fp16.safetensors",
+    svrResolution: 1080,
+    defaults: { steps: 8, cfg: 1.0, width: 1152, height: 1536, sampler: "euler", scheduler: "beta" },
+    neg: "",
+  };
+
+  const PRESETS = { lustify: LUSTIFY, moss: MOSS, wai: WAI, hassaku: HASSAKU, krea2svr: KREA2SVR };
+
+  /** Krea2_SeedVR2_7B_FP8: Krea2 first pass (+realism LoRA) -> SeedVR2 7B FP8 upscale. Muted IPAdapter/CN/LayerStyle/compile nodes omitted. */
+  function buildKrea2SeedVR2Workflow(opts) {
+    const P = KREA2SVR;
+    const text = String(opts.prompt || "");
+    const neg = opts.negative != null ? String(opts.negative).trim() : "";
+    const steps = Number(opts.steps) || P.defaults.steps;
+    const width = Math.round((Number(opts.width) || P.defaults.width) / 16) * 16;
+    const height = Math.round((Number(opts.height) || P.defaults.height) / 16) * 16;
+    const seed = Number(opts.seed) || 0;
+    const cfg = opts.cfg != null ? Number(opts.cfg) : P.defaults.cfg;
+    const prefix = opts.prefix || "krea2svr_" + seed;
+    const g = {
+      "1": { class_type: "UNETLoader", inputs: { unet_name: P.unet, weight_dtype: "default" } },
+      "2": { class_type: "CLIPLoader", inputs: { clip_name: P.clip, type: "krea2", device: "default" } },
+      "3": { class_type: "VAELoader", inputs: { vae_name: P.vae } },
+      "11": { class_type: "LoraLoaderModelOnly", inputs: { model: ["1", 0], lora_name: P.lora, strength_model: P.loraStrength } },
+      "4": { class_type: "ModelSamplingAuraFlow", inputs: { model: ["11", 0], shift: 4.0 } },
+      "5": { class_type: "CLIPTextEncode", inputs: { text: text, clip: ["2", 0] } },
+      "7": { class_type: "EmptyLatentImage", inputs: { width: width, height: height, batch_size: 1 } },
+      "8": {
+        class_type: "KSampler",
+        inputs: {
+          seed: seed, steps: steps, cfg: cfg, sampler_name: "euler", scheduler: "beta", denoise: 1.0,
+          model: ["4", 0], positive: ["5", 0], negative: ["6", 0], latent_image: ["7", 0],
+        },
+      },
+      "9": { class_type: "VAEDecode", inputs: { samples: ["8", 0], vae: ["3", 0] } },
+      "20": {
+        class_type: "SeedVR2LoadDiTModel",
+        inputs: { model: P.dit, device: "cuda:0", blocks_to_swap: 0, swap_io_components: false, offload_device: "none", cache_model: false, attention_mode: "sdpa" },
+      },
+      "21": {
+        class_type: "SeedVR2LoadVAEModel",
+        inputs: { model: P.svrVae, device: "cuda:0", encode_tiled: false, encode_tile_size: 1024, encode_tile_overlap: 128, decode_tiled: false, decode_tile_size: 1024, decode_tile_overlap: 128, tile_debug: "false", offload_device: "none", cache_model: false },
+      },
+      "22": {
+        class_type: "SeedVR2VideoUpscaler",
+        inputs: {
+          image: ["9", 0], dit: ["20", 0], vae: ["21", 0], seed: seed % 4294967296, resolution: P.svrResolution, max_resolution: 0,
+          batch_size: 1, uniform_batch_size: false, color_correction: "lab", temporal_overlap: 0, prepend_frames: 0,
+          input_noise_scale: 0, latent_noise_scale: 0, offload_device: "cpu", enable_debug: false,
+        },
+      },
+      "10": { class_type: "SaveImage", inputs: { filename_prefix: prefix, images: ["22", 0] } },
+    };
+    if (neg) g["6"] = { class_type: "CLIPTextEncode", inputs: { text: neg, clip: ["2", 0] } };
+    else g["6"] = { class_type: "ConditioningZeroOut", inputs: { conditioning: ["5", 0] } };
+    return g;
+  }
 
   function buildLustifyWorkflow(opts) {
     const text = String(opts.prompt || "");
@@ -264,6 +329,7 @@
    */
   function buildWorkflow(opts) {
     const model = String((opts && opts.model) || "lustify").toLowerCase();
+    if (model === "krea2svr") return buildKrea2SeedVR2Workflow(opts || {});
     if (model === "moss") return buildMossWorkflow(opts || {});
     if (model === "wai") return buildSdxlCheckpointWorkflow(opts || {}, WAI);
     if (model === "hassaku") return buildSdxlCheckpointWorkflow(opts || {}, HASSAKU);
@@ -276,6 +342,8 @@
     MOSS,
     WAI,
     HASSAKU,
+    KREA2SVR,
+    buildKrea2SeedVR2Workflow,
     DEFAULT_NEG: LUSTIFY.neg,
     getPreset,
     buildLustifyWorkflow,
