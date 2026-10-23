@@ -1915,6 +1915,8 @@
       await renderGallery();
     } catch (e) {
       console.error("gallery save failed", e);
+      if (meta.throwOnError) throw new Error("存入本机图库失败: " + (e && (e.name || e.message) || e));
+      setStatus("图已生成，但存入本机图库失败（可能手机存储/无痕模式）: " + (e && (e.message || e.name) || e), "err");
     }
   }
 
@@ -2034,12 +2036,13 @@
       items.reverse();
 
       if (!items.length) {
-        setStatus("没有新照片（历史里都已在图库或为空）", "ok");
+        setStatus("没有新照片：服务器历史 " + ids.length + " 条，均已在本机图库（看下方图库）或为空", "ok");
         await renderGallery();
         return;
       }
 
       let got = 0;
+      const pullErrors = [];
       let lastBlobLocal = null;
       let lastName = null;
       const maxPull = 30;
@@ -2059,6 +2062,7 @@
             height: (img.metadata && img.metadata.height) || null,
             steps: null,
             createdAt: Date.now() - (items.length - i),
+            throwOnError: true,
           });
           await maybeUploadToGithub(blob, filename);
           await maybeUploadToTelegram(blob, filename);
@@ -2068,10 +2072,18 @@
           got++;
         } catch (e) {
           console.warn("pull skip", img.filename, e);
+          pullErrors.push(img.filename + ": " + (e && e.message ? e.message : String(e)));
+          if (!lastBlobLocal) {
+            try { const r = await fetchImageBlob(img); lastBlobLocal = r.blob; lastName = r.filename; } catch (_) {}
+          }
         }
       }
       if (lastBlobLocal) showImage(lastBlobLocal, lastName || "pulled.png");
-      setStatus("已拉取 " + got + " 张新照片到图库", "ok");
+      if (pullErrors.length) {
+        setStatus("已拉取 " + got + " 张；失败 " + pullErrors.length + " 张 → " + pullErrors.slice(0, 2).join(" ｜ "), "err");
+      } else {
+        setStatus("已拉取 " + got + " 张新照片到图库", "ok");
+      }
     } catch (e) {
       console.error(e);
       setStatus("拉取失败: " + (e && e.message ? e.message : String(e)), "err");
