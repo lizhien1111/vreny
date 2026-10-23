@@ -394,7 +394,7 @@
     if (!e) return false;
     if (isAbortError(e)) return false;
     const msg = String(e && e.message ? e.message : e);
-    return /Load failed|Failed to fetch|NetworkError|network|ECONNRESET|ERR_NETWORK|The network connection was lost|cancelled|canceled|网络中断|取图网络失败|分片|空文件/i.test(
+    return /Load failed|Failed to fetch|NetworkError|network|ECONNRESET|ERR_NETWORK|The network connection was lost|cancelled|canceled|网络中断|取图网络失败|空文件/i.test(
       msg
     );
   }
@@ -403,7 +403,7 @@
   function formatFetchError(e, ms) {
     if (isAbortError(e)) return "下载超时 " + Math.round((ms || 0) / 1000) + "s";
     const msg = e && e.message ? String(e.message) : String(e || "");
-    if (/^下载超时|^取图失败|^取图网络|^网络中断|^分片/.test(msg)) return msg;
+    if (/^下载超时|^取图失败|^取图网络|^网络中断/.test(msg)) return msg;
     if (/Load failed/i.test(msg)) return "网络中断，连接被断开，可再拉一次";
     if (/Failed to fetch|NetworkError|network connection was lost/i.test(msg)) {
       return "取图网络失败，可再拉一次";
@@ -415,74 +415,34 @@
     return formatFetchError(e, 90000);
   }
 
-  const RANGE_CHUNK = 512 * 1024; // 512KB — safer on iOS + AutoDL proxy
-  const RANGE_CHUNK_TIMEOUT = 45000;
-  const RANGE_CHUNK_RETRIES = 3;
-
-  async function fetchRangeChunk(url, start, end, timeoutMs) {
-    const ms = timeoutMs || RANGE_CHUNK_TIMEOUT;
-    let lastErr = null;
-    for (let attempt = 1; attempt <= RANGE_CHUNK_RETRIES; attempt++) {
-      try {
-        const res = await fetchWithTimeout(url, ms, {
-          headers: { Range: "bytes=" + start + "-" + end },
-        });
-        if (res.status === 200) {
-          // Server ignored Range — return full body once.
-          const buf = await res.arrayBuffer();
-          if (!buf || !buf.byteLength) throw new Error("取图空文件");
-          return { full: true, buf: buf };
-        }
-        if (res.status !== 206) {
-          throw new Error("取图失败 HTTP " + res.status);
-        }
-        const buf = await res.arrayBuffer();
-        if (!buf || !buf.byteLength) throw new Error("分片空数据 @" + start);
-        return { full: false, buf: buf };
-      } catch (e) {
-        lastErr = e;
-        const msg = formatFetchError(e, ms);
-        if (/^取图失败 HTTP/.test(msg) && !/HTTP 5\d\d/.test(msg)) {
-          throw new Error(msg);
-        }
-        if (attempt >= RANGE_CHUNK_RETRIES) throw new Error(msg);
-        await sleep(300 * attempt);
-      }
+  /** Full-file GET of original PNG (no Range chunks). */
+  async function fetchImageBlobOnce(url, ms) {
+    let res;
+    try {
+      res = await fetchWithTimeout(url, ms || 90000);
+    } catch (e) {
+      throw new Error(formatFetchError(e, ms));
     }
-    throw new Error(formatFetchError(lastErr, ms));
-  }
-
-  /**
-   * Chunked Range download. Avoids iOS Safari mid-body "Load failed" on large
-   * AutoDL-proxied PNGs. Assembles original bytes (still PNG).
-   */
-  async function fetchImageBlobOnce(url, overallMs) {
-    const deadline = Date.now() + (overallMs || 180000);
-    const parts = [];
-    let offset = 0;
-    let guard = 0;
-    while (guard++ < 64) {
-      if (Date.now() > deadline) throw new Error("下载超时 " + Math.round((overallMs || 0) / 1000) + "s");
-      const end = offset + RANGE_CHUNK - 1;
-      const leftMs = Math.max(8000, Math.min(RANGE_CHUNK_TIMEOUT, deadline - Date.now()));
-      const piece = await fetchRangeChunk(url, offset, end, leftMs);
-      if (piece.full) {
-        return new Blob([piece.buf], { type: "image/png" });
+    if (!res.ok) throw new Error("取图失败 HTTP " + res.status);
+    try {
+      const buf = await res.arrayBuffer();
+      if (!buf || !buf.byteLength) throw new Error("取图空文件");
+      const blob = new Blob([buf], { type: "image/png" });
+      if (!blob.size) throw new Error("取图空文件");
+      return blob;
+    } catch (e) {
+      // Headers arrived but body dropped — common on mobile + AutoDL proxy.
+      if (e && e.message && /^取图空文件|^取图失败|^下载超时|^取图网络|^网络中断/.test(String(e.message))) {
+        throw e;
       }
-      parts.push(piece.buf);
-      offset += piece.buf.byteLength;
-      if (piece.buf.byteLength < RANGE_CHUNK) break; // last partial chunk
+      throw new Error(formatFetchError(e, ms));
     }
-    if (!parts.length) throw new Error("取图空文件");
-    const blob = new Blob(parts, { type: "image/png" });
-    if (!blob.size) throw new Error("取图空文件");
-    return blob;
   }
 
   async function fetchImageBlob(img, timeoutMs) {
     const url = viewUrl(img);
-    const ms = timeoutMs || 180000;
-    const maxAttempts = 2;
+    const ms = timeoutMs || 90000;
+    const maxAttempts = 3; // 1 try + 2 retries
     let lastErr = null;
     for (let attempt = 1; attempt <= maxAttempts; attempt++) {
       try {
@@ -494,7 +454,7 @@
         const msg = wrapped.message;
         const retry =
           attempt < maxAttempts &&
-          isRetryableFetchError(e) &&
+          (isRetryableFetchError(e) || /网络中断|取图网络失败|取图空文件/i.test(msg)) &&
           !/^下载超时/.test(msg) &&
           !/^取图失败 HTTP [45]/.test(msg);
         if (!retry) throw wrapped;
@@ -2205,8 +2165,7 @@
             "/" +
             total +
             " · " +
-            (img.filename || "") +
-            "（分片下载原图PNG）",
+            (img.filename || ""),
           "run"
         );
         try {
