@@ -366,30 +366,85 @@
     const ctrl = new AbortController();
     const tid = setTimeout(function () { ctrl.abort(); }, ms);
     try {
-      const res = await fetch(url, { mode: "cors", signal: ctrl.signal });
+      const res = await fetch(url, {
+        mode: "cors",
+        cache: "no-store",
+        credentials: "omit",
+        signal: ctrl.signal,
+      });
       return res;
     } finally {
       clearTimeout(tid);
     }
   }
 
-  async function fetchImageBlob(img, timeoutMs) {
-    const url = viewUrl(img);
-    const ms = timeoutMs || 25000;
+  function isAbortError(e) {
+    if (!e) return false;
+    if (e.name === "AbortError") return true;
+    const msg = String(e.message || e);
+    return /abort/i.test(msg);
+  }
+
+  /** iOS Safari often reports mid-body disconnect as TypeError "Load failed". */
+  function isRetryableFetchError(e) {
+    if (!e) return false;
+    if (isAbortError(e)) return false;
+    const msg = String(e.message || e);
+    return /Load failed|Failed to fetch|NetworkError|network|ECONNRESET|ERR_NETWORK|The network connection was lost|cancelled|canceled/i.test(
+      msg
+    );
+  }
+
+  function formatFetchError(e, ms) {
+    if (isAbortError(e)) return "下载超时 " + Math.round(ms / 1000) + "s";
+    const msg = e && e.message ? e.message : String(e);
+    if (/Load failed/i.test(msg)) {
+      return "网络中断(Load failed)，可重试";
+    }
+    return "取图网络失败: " + msg;
+  }
+
+  async function fetchImageBlobOnce(url, ms) {
     let res;
     try {
       res = await fetchWithTimeout(url, ms);
     } catch (e) {
-      const aborted = e && (e.name === "AbortError" || /abort/i.test(String(e)));
-      throw new Error(
-        aborted
-          ? "下载超时 " + Math.round(ms / 1000) + "s"
-          : "取图网络失败: " + (e && e.message ? e.message : e)
-      );
+      throw new Error(formatFetchError(e, ms));
     }
     if (!res.ok) throw new Error("取图失败 HTTP " + res.status);
-    const blob = await res.blob();
-    return { blob: blob, url: url, filename: img.filename };
+    try {
+      const blob = await res.blob();
+      if (!blob || !blob.size) throw new Error("取图空文件");
+      return blob;
+    } catch (e) {
+      // Headers arrived but body dropped — common on mobile + AutoDL proxy.
+      throw new Error(formatFetchError(e, ms));
+    }
+  }
+
+  async function fetchImageBlob(img, timeoutMs) {
+    const url = viewUrl(img);
+    const ms = timeoutMs || 90000;
+    const maxAttempts = 3;
+    let lastErr = null;
+    for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+      try {
+        const blob = await fetchImageBlobOnce(url, ms);
+        return { blob: blob, url: url, filename: img.filename };
+      } catch (e) {
+        lastErr = e;
+        const msg = e && e.message ? e.message : String(e);
+        const retry =
+          attempt < maxAttempts &&
+          (isRetryableFetchError(e) ||
+            /网络中断|Load failed|取图网络失败|取图空文件/i.test(msg)) &&
+          !/^下载超时/.test(msg) &&
+          !/^取图失败 HTTP/.test(msg);
+        if (!retry) throw e;
+        await sleep(400 * attempt);
+      }
+    }
+    throw lastErr || new Error("取图失败");
   }
 
   function sleep(ms) {
@@ -2088,11 +2143,17 @@
       for (let i = 0; i < items.length && got < maxPull; i++) {
         const { img } = items[i];
         setStatus(
-          "拉取中… " + (i + 1) + "/" + total + " · " + (img.filename || ""),
+          "拉取中… " +
+            (i + 1) +
+            "/" +
+            total +
+            " · " +
+            (img.filename || "") +
+            "（原图PNG，约数MB，手机可能较慢）",
           "run"
         );
         try {
-          const { blob, filename } = await fetchImageBlob(img, 45000);
+          const { blob, filename } = await fetchImageBlob(img, 90000);
           try {
             await saveToGallery({
               blob: blob,
@@ -2114,12 +2175,9 @@
                 (saveErr && saveErr.message ? saveErr.message : saveErr)
             );
           }
-          try {
-            await maybeUploadToGithub(blob, filename);
-          } catch (_) {}
-          try {
-            await maybeUploadToTelegram(blob, filename);
-          } catch (_) {}
+          // Non-blocking: do not stall pull on GitHub/Telegram queue
+          Promise.resolve(maybeUploadToGithub(blob, filename)).catch(function () {});
+          Promise.resolve(maybeUploadToTelegram(blob, filename)).catch(function () {});
           have[filename] = true;
           lastBlobLocal = blob;
           lastName = filename;
