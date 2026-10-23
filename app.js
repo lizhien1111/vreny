@@ -362,11 +362,65 @@
     return apiUrl("/view?" + q.toString());
   }
 
-  async function fetchImageBlob(img) {
+  async function fetchWithTimeout(url, ms) {
+    const ctrl = new AbortController();
+    const tid = setTimeout(function () { ctrl.abort(); }, ms);
+    try {
+      const res = await fetch(url, { mode: "cors", signal: ctrl.signal });
+      return res;
+    } finally {
+      clearTimeout(tid);
+    }
+  }
+
+  /** Shrink large PNGs for iOS IndexedDB / preview (keeps aspect). */
+  async function compressBlobIfLarge(blob, maxBytes) {
+    maxBytes = maxBytes || 1800 * 1024;
+    if (!blob || blob.size <= maxBytes) return blob;
+    try {
+      const bmp = await createImageBitmap(blob);
+      const maxEdge = 1600;
+      let w = bmp.width;
+      let h = bmp.height;
+      const m = Math.max(w, h);
+      if (m > maxEdge) {
+        const s = maxEdge / m;
+        w = Math.round(w * s);
+        h = Math.round(h * s);
+      }
+      const canvas = document.createElement("canvas");
+      canvas.width = w;
+      canvas.height = h;
+      const ctx = canvas.getContext("2d");
+      ctx.drawImage(bmp, 0, 0, w, h);
+      if (bmp.close) bmp.close();
+      const jpeg = await new Promise(function (resolve) {
+        canvas.toBlob(resolve, "image/jpeg", 0.82);
+      });
+      if (jpeg && jpeg.size > 0 && jpeg.size < blob.size) return jpeg;
+    } catch (e) {
+      console.warn("compress failed", e);
+    }
+    return blob;
+  }
+
+  async function fetchImageBlob(img, timeoutMs) {
     const url = viewUrl(img);
-    const res = await fetch(url);
-    if (!res.ok) throw new Error("取图失败 " + res.status);
-    return { blob: await res.blob(), url, filename: img.filename };
+    const ms = timeoutMs || 25000;
+    let res;
+    try {
+      res = await fetchWithTimeout(url, ms);
+    } catch (e) {
+      const aborted = e && (e.name === "AbortError" || /abort/i.test(String(e)));
+      throw new Error(
+        aborted
+          ? "下载超时 " + Math.round(ms / 1000) + "s"
+          : "取图网络失败: " + (e && e.message ? e.message : e)
+      );
+    }
+    if (!res.ok) throw new Error("取图失败 HTTP " + res.status);
+    const blob = await res.blob();
+    return { blob: blob, url: url, filename: img.filename };
   }
 
   function sleep(ms) {
@@ -2023,17 +2077,14 @@
           for (const img of imgs) {
             if (!img || !img.filename) continue;
             if (have[img.filename]) continue;
-            items.push({
-              img: img,
-              promptId: id,
-              createdAt: (st.messages && st.messages.length) ? Date.now() : Date.now(),
-            });
-          }
-        }
-      }
-
-      // newest filenames tend to sort higher with higher counters; reverse so we process recent first
-      items.reverse();
+            let ts = 0;
+            const msgs = st.messages || [];
+            for (let mi = 0; mi < msgs.length; mi++) {
+              const m = msgs[mi];
+              if (m && m[1] && typeof m[1].timestamp ==      // newest first by Comfy history timestamps
+      items.sort(function (a, b) {
+        return (b.ts || 0) - (a.ts || 0);
+      });
 
       if (!items.length) {
         setStatus("没有新照片：服务器历史 " + ids.length + " 条，均已在本机图库（看下方图库）或为空", "ok");
@@ -2046,39 +2097,73 @@
       let lastBlobLocal = null;
       let lastName = null;
       const maxPull = 30;
+      const total = Math.min(items.length, maxPull);
       for (let i = 0; i < items.length && got < maxPull; i++) {
         const { img } = items[i];
-        setStatus("拉取中… " + (got + 1) + "/" + Math.min(items.length, maxPull), "run");
+        setStatus("拉取中… " + (i + 1) + "/" + total + " · " + (img.filename || ""), "run");
         try {
-          const { blob, filename } = await fetchImageBlob(img);
-          await saveToGallery({
-            blob,
-            filename,
-            subfolder: img.subfolder || "",
-            comfyType: img.type || "output",
-            prompt: "",
-            seed: null,
-            width: (img.metadata && img.metadata.width) || null,
-            height: (img.metadata && img.metadata.height) || null,
-            steps: null,
-            createdAt: Date.now() - (items.length - i),
-            throwOnError: true,
-          });
-          await maybeUploadToGithub(blob, filename);
-          await maybeUploadToTelegram(blob, filename);
+          let { blob, filename, url } = await fetchImageBlob(img, 25000);
+          blob = await compressBlobIfLarge(blob);
+          if (filename && blob.type === "image/jpeg" && !/\.jpe?g$/i.test(filename)) {
+            filename = filename.replace(/\.png$/i, "") + "_phone.jpg";
+          }
+          try {
+            await saveToGallery({
+              blob: blob,
+              filename: filename,
+              subfolder: img.subfolder || "",
+              comfyType: img.type || "output",
+              prompt: "",
+              seed: null,
+              width: (img.metadata && img.metadata.width) || null,
+              height: (img.metadata && img.metadata.height) || null,
+              steps: null,
+              createdAt: Date.now() - (items.length - i),
+              throwOnError: true,
+            });
+          } catch (saveErr) {
+            // still show preview even if IndexedDB full
+            pullErrors.push(
+              (img.filename || "") +
+                " 已下载但存图库失败: " +
+                (saveErr && saveErr.message ? saveErr.message : saveErr)
+            );
+          }
+          try {
+            await maybeUploadToGithub(blob, filename);
+          } catch (_) {}
+          try {
+            await maybeUploadToTelegram(blob, filename);
+          } catch (_) {}
           have[filename] = true;
+          if (img.filename) have[img.filename] = true;
           lastBlobLocal = blob;
           lastName = filename;
           got++;
+          showImage(blob, filename || "pulled.jpg");
         } catch (e) {
           console.warn("pull skip", img.filename, e);
-          pullErrors.push(img.filename + ": " + (e && e.message ? e.message : String(e)));
-          if (!lastBlobLocal) {
-            try { const r = await fetchImageBlob(img); lastBlobLocal = r.blob; lastName = r.filename; } catch (_) {}
-          }
+          const reason = e && e.message ? e.message : String(e);
+          const openUrl = viewUrl(img);
+          pullErrors.push((img.filename || "?") + ": " + reason + " → " + openUrl);
         }
       }
-      if (lastBlobLocal) showImage(lastBlobLocal, lastName || "pulled.png");
+      if (lastBlobLocal) showImage(lastBlobLocal, lastName || "pulled.jpg");
+      if (pullErrors.length) {
+        setStatus(
+          "已拉取 " +
+            got +
+            "/" +
+            total +
+            "；失败 " +
+            pullErrors.length +
+            " → " +
+            pullErrors.slice(0, 2).join(" ｜ "),
+          got ? "ok" : "err"
+        );
+      } else {
+        setStatus("已拉取 " + got + " 张新照片到图库", "ok");
+      }      if (lastBlobLocal) showImage(lastBlobLocal, lastName || "pulled.png");
       if (pullErrors.length) {
         setStatus("已拉取 " + got + " 张；失败 " + pullErrors.length + " 张 → " + pullErrors.slice(0, 2).join(" ｜ "), "err");
       } else {
