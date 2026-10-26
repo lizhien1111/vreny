@@ -2584,25 +2584,45 @@
   }
 
   async function autodlTestTokenOnly() {
+    // 强制以输入框当前值为准，避免旧 localStorage 覆盖
+    if ($("autodlToken")) {
+      var typed = normalizeAutodlToken($("autodlToken").value || "");
+      if (typed) {
+        $("autodlToken").value = typed;
+        localStorage.setItem(LS_AUTODL_TOKEN, typed);
+      } else {
+        localStorage.removeItem(LS_AUTODL_TOKEN);
+      }
+    }
     persistAutodlCreds();
     const c = getAutodlCreds();
     if (!c.token) {
       setConnStatus("请先填 AutoDL Token", "err");
       return;
     }
+    var tip =
+      "长度" +
+      c.token.length +
+      " · " +
+      c.token.slice(0, 6) +
+      "…" +
+      c.token.slice(-6);
     if (!c.token.startsWith("eyJ")) {
       setConnStatus(
-        "这不是网页 JWT。开发者 Token 不能用在这里；请用 F12 里 Authorization 的 eyJ… 长串",
+        "发出去的不是 JWT（" + tip + "）。请清空后重贴 eyJ 开头长串",
         "err"
       );
       return;
     }
-    setConnStatus("正在检测 Token…", "run");
+    setConnStatus("正在检测 Token（" + tip + "）…", "run");
     const got = await autodlFetchInstanceList();
     if (!got.ok) {
       var m = got.message || "Token 无效";
       if (/登录超时|AuthorizeFailed|登录失败/.test(m)) {
-        m += " · 多半填成了开发者Token或过期JWT，需 eyJ 开头的网页 Authorization";
+        m +=
+          " · 长串也对：多半这份 JWT 已过期，请在刚登录的 AutoDL 页重新 F12 复制（" +
+          tip +
+          "）";
       }
       setConnStatus("失败: " + m, "err");
       return;
@@ -2621,6 +2641,13 @@
 
   async function autodlEnsureRunning(maxMs) {
     maxMs = maxMs || 240000;
+    if ($("autodlToken")) {
+      var typed = normalizeAutodlToken($("autodlToken").value || "");
+      if (typed) {
+        $("autodlToken").value = typed;
+        localStorage.setItem(LS_AUTODL_TOKEN, typed);
+      }
+    }
     const c = getAutodlCreds();
     if (!c.token || !c.uuid) return { ok: false, skip: true };
     const listed = await autodlFetchInstanceList();
