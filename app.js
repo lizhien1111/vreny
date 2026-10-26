@@ -2466,7 +2466,116 @@
     };
   }
 
+  async function autodlPowerOnViaProxy() {
+    const c = getAutodlCreds();
+    if (!c.token || !c.uuid) return { ok: false, skip: true };
+    persistAutodlCreds();
+    const res = await fetch(AUTODL_PROXY + "/api/v1/instance/power_on", {
+      method: "POST",
+      mode: "cors",
+      headers: {
+        Authorization: c.token,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({ instance_uuid: c.uuid }),
+    });
+    const j = await res.json().catch(function () {
+      return {};
+    });
+    const codeOk = j && (j.code === 0 || j.code === "Success");
+    return {
+      ok: !!(res.ok && (codeOk || j.ok === true || !("code" in j))),
+      skip: false,
+      status: res.status,
+      message: (j && (j.msg || j.message || j.error)) || ("HTTP " + res.status),
+      raw: j,
+    };
+  }
+
+  async function autodlFetchInstance() {
+    const c = getAutodlCreds();
+    if (!c.token || !c.uuid) return null;
+    const res = await fetch(AUTODL_PROXY + "/api/v1/instance", {
+      method: "POST",
+      mode: "cors",
+      headers: {
+        Authorization: c.token,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({ page_index: 1, page_size: 50 }),
+    });
+    const j = await res.json().catch(function () {
+      return {};
+    });
+    const list = (j && j.data && j.data.list) || [];
+    for (let i = 0; i < list.length; i++) {
+      if (list[i] && list[i].uuid === c.uuid) return list[i];
+    }
+    return null;
+  }
+
+  function domainToHttps(dom) {
+    if (!dom) return "";
+    let d = String(dom).trim();
+    if (!d) return "";
+    d = d.split(":")[0];
+    if (/^https?:\/\//i.test(d)) return d.replace(/\/+$/, "");
+    return "https://" + d;
+  }
+
+  function applyAutodlServiceUrls(it) {
+    if (!it) return;
+    const comfy = domainToHttps(it.service_6006_domain || it.service_6006 || "");
+    const start = domainToHttps(it.service_6008_domain || it.service_6008 || "");
+    if (comfy) {
+      if ($("bootUrl")) $("bootUrl").value = comfy;
+      if ($("baseUrl")) $("baseUrl").value = comfy;
+      localStorage.setItem("comfy_phone_base", comfy);
+    }
+    if (start) {
+      if ($("startApiUrl")) $("startApiUrl").value = start;
+      localStorage.setItem("comfy_phone_start_api", start);
+    }
+  }
+
+  async function autodlEnsureRunning(maxMs) {
+    maxMs = maxMs || 240000;
+    const c = getAutodlCreds();
+    if (!c.token || !c.uuid) return { ok: false, skip: true };
+    let it = await autodlFetchInstance();
+    if (!it) {
+      return { ok: false, skip: false, message: "找不到该 UUID 的实例（Token 是否过期？）" };
+    }
+    applyAutodlServiceUrls(it);
+    if (it.status !== "running") {
+      setConnStatus("正在开机…", "run");
+      const on = await autodlPowerOnViaProxy();
+      if (!on.ok && !on.skip) {
+        // still poll; sometimes already starting
+        setConnStatus("开机请求: " + on.message + " · 等待中…", "run");
+      }
+    }
+    const t0 = Date.now();
+    let n = 0;
+    while (Date.now() - t0 < maxMs) {
+      n += 1;
+      it = await autodlFetchInstance();
+      if (it) {
+        applyAutodlServiceUrls(it);
+        if (it.status === "running") {
+          return { ok: true, skip: false, instance: it };
+        }
+        setConnStatus("开机中… " + (it.status || "?") + " (" + n + ")", "run");
+      } else {
+        setConnStatus("等待实例状态… (" + n + ")", "run");
+      }
+      await sleep(4000);
+    }
+    return { ok: false, skip: false, message: "开机超时，请到 AutoDL 看实例状态" };
+  }
+
   async function powerOffViaStartApi() {
+
     const apiBase = getStartApiBase();
     if (!apiBase) return { ok: false, skip: true };
     try {
@@ -3540,77 +3649,122 @@
     return new Promise((r) => setTimeout(r, ms));
   }
 
-  /** POST /start on start API, then poll Comfy /system_stats until up or timeout. */
+  /** 开机（AutoDL）→ 填公网 → 调 6008 /start（可无）→ 等 Comfy 公网。 */
   async function startComfyViaApi() {
-    let apiBase;
-    try {
-      apiBase = requireStartApiBase();
-    } catch (e) {
-      setConnStatus("失败: " + e.message, "err");
-      return false;
-    }
-    localStorage.setItem("comfy_phone_start_api", apiBase);
+    persistAutodlCreds();
+    const creds = getAutodlCreds();
+    const hasCreds = !!(creds.token && creds.uuid);
 
-    // Persist comfy URL too if present
-    try {
-      const comfyBase = getBase();
-      if (comfyBase) localStorage.setItem("comfy_phone_base", comfyBase);
-    } catch (e) {}
-
-    setConnStatus("正在请求启动接口…", "run");
-    let startJson = null;
-    try {
-      const ctrl = new AbortController();
-      const t = setTimeout(() => ctrl.abort(), 90000);
-      const res = await fetch(apiBase + "/start", {
-        method: "POST",
-        mode: "cors",
-        headers: { "Content-Type": "application/json" },
-        body: "{}",
-        signal: ctrl.signal,
-      });
-      clearTimeout(t);
-      startJson = await res.json().catch(() => ({}));
-      if (!res.ok && !(startJson && startJson.ok)) {
-        const msg =
-          (startJson && startJson.message) || "HTTP " + res.status;
-        setConnStatus("拉起失败: " + msg, "err");
+    if (hasCreds) {
+      setConnStatus("查实例 / 开机…", "run");
+      try {
+        const ens = await autodlEnsureRunning(240000);
+        if (!ens.ok) {
+          setConnStatus("失败: " + (ens.message || "开机失败"), "err");
+          return false;
+        }
+        setConnStatus("实例已开机 · 准备拉起 Comfy…", "run");
+      } catch (e) {
+        setConnStatus(
+          "开机失败: " + (e && e.message ? e.message : String(e)),
+          "err"
+        );
         return false;
       }
-    } catch (e) {
-      const msg = e && e.name === "AbortError" ? "启动接口超时" : (e && e.message ? e.message : String(e));
-      const corsHint =
-        /Failed to fetch|NetworkError|CORS|cross-origin/i.test(msg) ||
-        msg === "Failed to fetch"
-          ? "（检查 6008 公网与 CORS；接口需已开机运行）"
-          : "";
-      setConnStatus("拉起失败: " + msg + corsHint, "err");
+    } else if (!getStartApiBase()) {
+      setConnStatus(
+        "请先填 AutoDL Token + 实例 UUID（推荐），或填启动接口地址（6008）",
+        "err"
+      );
       return false;
     }
 
-    if (startJson && startJson.already) {
-      setConnStatus("Comfy 已在运行 · 正在检测…", "run");
+    let apiBase = getStartApiBase();
+    if (apiBase) localStorage.setItem("comfy_phone_start_api", apiBase);
+    try {
+      const comfyBase0 = getBase();
+      if (comfyBase0) localStorage.setItem("comfy_phone_base", comfyBase0);
+    } catch (e) {}
+
+    // Try start API with retries (may come up after boot script)
+    let startJson = null;
+    let startOk = false;
+    if (apiBase) {
+      const startDeadline = Date.now() + 180000;
+      let sn = 0;
+      while (Date.now() < startDeadline) {
+        sn += 1;
+        setConnStatus("请求启动接口… (" + sn + ")", "run");
+        try {
+          const ctrl = new AbortController();
+          const tm = setTimeout(function () {
+            ctrl.abort();
+          }, 20000);
+          const res = await fetch(apiBase + "/start", {
+            method: "POST",
+            mode: "cors",
+            headers: { "Content-Type": "application/json" },
+            body: "{}",
+            signal: ctrl.signal,
+          });
+          clearTimeout(tm);
+          startJson = await res.json().catch(function () {
+            return {};
+          });
+          if (res.ok || (startJson && startJson.ok)) {
+            startOk = true;
+            break;
+          }
+        } catch (e) {
+          /* retry: start_api may not be up yet */
+        }
+        // Also refresh URLs from AutoDL while waiting
+        if (hasCreds) {
+          try {
+            const it = await autodlFetchInstance();
+            applyAutodlServiceUrls(it);
+            apiBase = getStartApiBase() || apiBase;
+          } catch (e2) {}
+        }
+        await sleep(4000);
+      }
+      if (startOk) {
+        setConnStatus(
+          (startJson && startJson.already
+            ? "Comfy 已在运行 · 检测公网…"
+            : (startJson && startJson.message) || "已请求拉起 · 等待公网…"),
+          "run"
+        );
+      } else {
+        setConnStatus(
+          "启动接口暂未通，继续等 Comfy 公网（若开机脚本会自启）…",
+          "run"
+        );
+      }
     } else {
-      setConnStatus(
-        (startJson && startJson.message) || "已请求拉起 · 等待 Comfy…",
-        "run"
-      );
+      setConnStatus("未填启动接口，直接等 Comfy 公网…", "run");
     }
 
-    // Poll Comfy public URL
     let comfyBase = "";
     try {
       comfyBase = getBase();
     } catch (e) {}
+    if (!comfyBase && hasCreds) {
+      try {
+        const it = await autodlFetchInstance();
+        applyAutodlServiceUrls(it);
+        comfyBase = getBase();
+      } catch (e) {}
+    }
     if (!comfyBase) {
       setConnStatus(
-        "启动接口已响应，但未填 Comfy 公网地址 — 请填 6006 公网后点检测",
-        startJson && startJson.ok ? "ok" : "err"
+        "还没有 Comfy 公网地址。请填步骤 3，或确认 AutoDL 已开 6006 自定义服务。",
+        "err"
       );
-      return !!(startJson && startJson.ok);
+      return false;
     }
 
-    const deadline = Date.now() + 90000;
+    const deadline = Date.now() + 240000;
     let attempt = 0;
     while (Date.now() < deadline) {
       attempt += 1;
@@ -3622,18 +3776,33 @@
         });
         if (res.ok) {
           const ok = await connectComfy();
-          if (ok) {
-            // connectComfy already set detailed status
-            return true;
-          }
+          if (ok) return true;
         }
       } catch (e) {
         /* keep polling */
       }
-      await sleep(2500);
+      // occasionally re-hit /start if still failing
+      if (apiBase && attempt % 5 === 0) {
+        fetch(apiBase + "/start", {
+          method: "POST",
+          mode: "cors",
+          headers: { "Content-Type": "application/json" },
+          body: "{}",
+        }).catch(function () {});
+      }
+      if (hasCreds && attempt % 6 === 0) {
+        try {
+          const it = await autodlFetchInstance();
+          applyAutodlServiceUrls(it);
+          const nb = getBase();
+          if (nb) comfyBase = nb;
+          apiBase = getStartApiBase() || apiBase;
+        } catch (e3) {}
+      }
+      await sleep(3000);
     }
     setConnStatus(
-      "启动接口已调用，但 Comfy 公网仍未连通（超时）。可再点检测连接。",
+      "实例可能已开，但 Comfy 公网仍未通。需在实例里装开机自启（start_api + boot_comfy），或手动在 AutoDL 终端拉起 Comfy。",
       "err"
     );
     return false;

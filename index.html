@@ -704,10 +704,10 @@
           placeholder="https://u….seetacloud.com（6008 映射）"
         />
         <p class="hint" style="margin:6px 0 10px;font-size:0.82rem;opacity:0.85">
-          填好步骤 3 的 Comfy 地址后，点「拉起 Comfy」；接口会在实例里跑 boot 脚本。
+          填 Token + UUID 后点「开机并拉起」：会先开机、自动填 6006/6008 公网，再拉起 Comfy。
         </p>
         <div class="boot-actions">
-          <button type="button" class="btn btn-primary" id="btnStartComfy">拉起 Comfy</button>
+          <button type="button" class="btn btn-primary" id="btnStartComfy">开机并拉起 Comfy</button>
         </div>
       </div>
 
@@ -918,10 +918,10 @@
     <div class="lightbox-info" id="lightboxInfo"></div>
   </div>
 
-  <script src="png-meta.js?v=poweroff-20261026a"></script>
-  <script src="workflow.js?v=poweroff-20261026a"></script>
-  <script src="gallery.js?v=poweroff-20261026a"></script>
-  <script src="app.js?v=poweroff-20261026a"></script>
+  <script src="png-meta.js?v=boot-20261026a"></script>
+  <script src="workflow.js?v=boot-20261026a"></script>
+  <script src="gallery.js?v=boot-20261026a"></script>
+  <script src="app.js?v=boot-20261026a"></script>
 
   <script>
     function googleTranslateElementInit() {
