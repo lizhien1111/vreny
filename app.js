@@ -2492,14 +2492,37 @@
     };
   }
 
-  async function autodlFetchInstance() {
+  function normalizeAutodlUuid(u) {
+    return String(u || "")
+      .trim()
+      .replace(/^instance[_-]?/i, "")
+      .toLowerCase();
+  }
+
+  function matchAutodlInstance(list, uuidRaw) {
+    const want = normalizeAutodlUuid(uuidRaw);
+    if (!want || !list || !list.length) return null;
+    for (let i = 0; i < list.length; i++) {
+      const it = list[i];
+      if (!it) continue;
+      const u = normalizeAutodlUuid(it.uuid);
+      const mid = normalizeAutodlUuid(it.machine_id);
+      if (u === want || mid === want) return it;
+      // allow short paste of leading id
+      if (u && (u.indexOf(want) === 0 || want.indexOf(u) === 0)) return it;
+    }
+    return null;
+  }
+
+  async function autodlFetchInstanceList() {
     const c = getAutodlCreds();
-    if (!c.token || !c.uuid) return null;
+    if (!c.token) return { ok: false, list: [], message: "未填 Token" };
+    const auth = /^Bearer\s/i.test(c.token) ? c.token : c.token;
     const res = await fetch(AUTODL_PROXY + "/api/v1/instance", {
       method: "POST",
       mode: "cors",
       headers: {
-        Authorization: c.token,
+        Authorization: auth,
         "Content-Type": "application/json",
       },
       body: JSON.stringify({ page_index: 1, page_size: 50 }),
@@ -2507,11 +2530,25 @@
     const j = await res.json().catch(function () {
       return {};
     });
-    const list = (j && j.data && j.data.list) || [];
-    for (let i = 0; i < list.length; i++) {
-      if (list[i] && list[i].uuid === c.uuid) return list[i];
+    if (!res.ok || (j && j.code && j.code !== "Success" && j.code !== 0)) {
+      return {
+        ok: false,
+        list: [],
+        message:
+          (j && (j.msg || j.message || j.error)) ||
+          ("Token 无效或过期 HTTP " + res.status),
+      };
     }
-    return null;
+    const list = (j && j.data && j.data.list) || [];
+    return { ok: true, list: list, message: "" };
+  }
+
+  async function autodlFetchInstance() {
+    const c = getAutodlCreds();
+    if (!c.token || !c.uuid) return null;
+    const got = await autodlFetchInstanceList();
+    if (!got.ok) return null;
+    return matchAutodlInstance(got.list, c.uuid);
   }
 
   function domainToHttps(dom) {
@@ -2542,9 +2579,29 @@
     maxMs = maxMs || 240000;
     const c = getAutodlCreds();
     if (!c.token || !c.uuid) return { ok: false, skip: true };
-    let it = await autodlFetchInstance();
+    const listed = await autodlFetchInstanceList();
+    if (!listed.ok) {
+      return {
+        ok: false,
+        skip: false,
+        message: listed.message || "Token 无效或过期，请到 AutoDL 重新复制",
+      };
+    }
+    let it = matchAutodlInstance(listed.list, c.uuid);
     if (!it) {
-      return { ok: false, skip: false, message: "找不到该 UUID 的实例（Token 是否过期？）" };
+      const hint = listed.list
+        .slice(0, 6)
+        .map(function (x) {
+          return (x.machine_alias || "") + " " + (x.uuid || "");
+        })
+        .join("；");
+      return {
+        ok: false,
+        skip: false,
+        message:
+          "UUID 对不上。当前账号实例：" +
+          (hint || "（列表空，多半 Token 过期）"),
+      };
     }
     applyAutodlServiceUrls(it);
     if (it.status !== "running") {
