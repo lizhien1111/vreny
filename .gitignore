@@ -1,3 +1,6 @@
 __pycache__/
 *.pyc
 .DS_Store
+workers/.gallery_upload_token
+workers/.gallery_view_key
+workers/gallery-defaults.json

@@ -1,0 +1,7 @@
+name = "comfy-phone-gallery"
+main = "gallery-kv.js"
+compatibility_date = "2024-09-23"
+
+[[kv_namespaces]]
+binding = "GALLERY_KV"
+id = "d2dd9c83739b492ab11768141729f577"

@@ -1148,6 +1148,117 @@
     return n > 0;
   }
 
+  /* ---- Cloudflare cloud gallery (Workers KV) ---- */
+  const LS_SAVE_CLOUD = "comfy_phone_save_cloud";
+  const LS_CLOUD_BASE = "comfy_phone_cloud_base";
+  const LS_CLOUD_UPLOAD = "comfy_phone_cloud_upload";
+  const LS_CLOUD_VIEW = "comfy_phone_cloud_view";
+  const DEFAULT_CLOUD_BASE = "https://comfy-phone-gallery.comfyphone.workers.dev";
+  const DEFAULT_CLOUD_UPLOAD = "6427f9f6676bfdb9a0bfa04f9ab7f3d7";
+  const DEFAULT_CLOUD_VIEW = "bb8d4e46181dd65bab0a54b0";
+
+  function getCloudBase() {
+    return (
+      (localStorage.getItem(LS_CLOUD_BASE) || DEFAULT_CLOUD_BASE || "")
+        .trim()
+        .replace(/\/+$/, "")
+    );
+  }
+  function getCloudUploadToken() {
+    return (localStorage.getItem(LS_CLOUD_UPLOAD) || DEFAULT_CLOUD_UPLOAD || "").trim();
+  }
+  function getCloudViewKey() {
+    return (localStorage.getItem(LS_CLOUD_VIEW) || DEFAULT_CLOUD_VIEW || "").trim();
+  }
+  function cloudGalleryUrl() {
+    const base = getCloudBase();
+    const k = getCloudViewKey();
+    if (!base) return "";
+    return k ? base + "/?k=" + encodeURIComponent(k) : base + "/";
+  }
+  function syncCloudGalleryLink() {
+    const a = $("cloudGalleryLink");
+    if (!a) return;
+    const u = cloudGalleryUrl();
+    if (u) {
+      a.href = u;
+      a.hidden = false;
+    } else {
+      a.removeAttribute("href");
+      a.hidden = true;
+    }
+  }
+  function loadCloudSettings() {
+    const chk = $("chkSaveCloud");
+    if (chk) {
+      const v = localStorage.getItem(LS_SAVE_CLOUD);
+      // default ON for first visit
+      chk.checked = v === null ? true : v === "1";
+    }
+    if (!localStorage.getItem(LS_CLOUD_BASE) && DEFAULT_CLOUD_BASE) {
+      localStorage.setItem(LS_CLOUD_BASE, DEFAULT_CLOUD_BASE);
+    }
+    if (!localStorage.getItem(LS_CLOUD_UPLOAD) && DEFAULT_CLOUD_UPLOAD) {
+      localStorage.setItem(LS_CLOUD_UPLOAD, DEFAULT_CLOUD_UPLOAD);
+    }
+    if (!localStorage.getItem(LS_CLOUD_VIEW) && DEFAULT_CLOUD_VIEW) {
+      localStorage.setItem(LS_CLOUD_VIEW, DEFAULT_CLOUD_VIEW);
+    }
+    syncCloudGalleryLink();
+  }
+  function persistCloudSettings() {
+    const chk = $("chkSaveCloud");
+    if (chk) localStorage.setItem(LS_SAVE_CLOUD, chk.checked ? "1" : "0");
+    syncCloudGalleryLink();
+  }
+
+  async function uploadBlobToCloud(blob, filename) {
+    if (!blob) return { ok: false, error: "no blob" };
+    const base = getCloudBase();
+    const token = getCloudUploadToken();
+    if (!base) return { ok: false, error: "未配置云库地址" };
+    if (!token) return { ok: false, error: "未配置上传密钥" };
+    try {
+      const res = await fetch(base + "/upload", {
+        method: "POST",
+        mode: "cors",
+        headers: {
+          Authorization: "Bearer " + token,
+          "X-Filename": sanitizeFilename(filename || "comfy_phone.png"),
+          "Content-Type": "application/octet-stream",
+        },
+        body: blob,
+      });
+      let data = null;
+      try { data = await res.json(); } catch (e) {}
+      if (!res.ok || !data || !data.ok) {
+        const err =
+          (data && data.error) ||
+          ("HTTP " + res.status);
+        return { ok: false, error: String(err).slice(0, 160) };
+      }
+      return { ok: true, key: data.key, url: data.url, bytes: data.bytes };
+    } catch (e) {
+      return {
+        ok: false,
+        error: (e && e.message ? e.message : String(e)).slice(0, 160),
+      };
+    }
+  }
+
+  async function maybeUploadToCloud(blob, filename) {
+    const chk = $("chkSaveCloud");
+    if (!chk || !chk.checked) return false;
+    const r = await uploadBlobToCloud(blob, filename);
+    if (!r.ok) {
+      console.warn("cloud upload failed", r.error);
+      setStatus("云库上传失败: " + (r.error || "unknown"), "err");
+      return false;
+    }
+    return true;
+  }
+
+
   async function uploadBlobToGithubWithMeta(blob, filename) {
     // Same as uploadBlobToGithub but returns {ok, path, error}
     if (!blob) return { ok: false, error: "no blob" };
@@ -2194,6 +2305,7 @@
           // Non-blocking: do not stall pull on GitHub/Telegram queue
           Promise.resolve(maybeUploadToGithub(blob, filename)).catch(function () {});
           Promise.resolve(maybeUploadToTelegram(blob, filename)).catch(function () {});
+          Promise.resolve(maybeUploadToCloud(blob, filename)).catch(function () {});
           have[filename] = true;
           lastBlobLocal = blob;
           lastName = filename;
@@ -2784,6 +2896,8 @@
       let ghFail = 0;
       let tgOk = 0;
       let tgFail = 0;
+      let cloudOk = 0;
+      let cloudFail = 0;
       for (let n = 0; n < batch; n++) {
         if (cancelRequested) {
           setStatus("已取消 · 完成 " + n + "/" + batch, "err");
@@ -2858,6 +2972,11 @@
           if (upTg) tgOk++;
           else tgFail++;
         }
+        const upCloud = await maybeUploadToCloud(blob, filename);
+        if ($("chkSaveCloud") && $("chkSaveCloud").checked) {
+          if (upCloud) cloudOk++;
+          else cloudFail++;
+        }
       }
       let doneMsg =
         "完成 · " +
@@ -2885,6 +3004,17 @@
           doneKind = "err";
         } else {
           doneMsg += " · Telegram " + tgOk + " · 跳过 " + tgFail;
+          doneKind = "err";
+        }
+      }
+      if (cloudOk || cloudFail) {
+        if (cloudFail === 0) {
+          doneMsg += " · 云库 " + cloudOk;
+        } else if (cloudOk === 0) {
+          doneMsg += " · 云库上传失败";
+          doneKind = "err";
+        } else {
+          doneMsg += " · 云库 " + cloudOk + " · 失败 " + cloudFail;
           doneKind = "err";
         }
       }
@@ -3621,6 +3751,11 @@
     $("lightbox").addEventListener("click", (ev) => {
       if (ev.target === $("lightbox")) closeLightbox();
     });
+
+    loadCloudSettings();
+    if ($("chkSaveCloud")) {
+      $("chkSaveCloud").addEventListener("change", persistCloudSettings);
+    }
 
     loadGhSettings();
     if ($("chkSaveGithub")) {
