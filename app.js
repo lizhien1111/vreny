@@ -2409,11 +2409,20 @@
   }
 
 
+  function normalizeAutodlToken(raw) {
+    let t = String(raw || "").trim();
+    // DevTools / 文档常带 Bearer；AutoDL 只要裸 JWT
+    t = t.replace(/^Bearer\s+/i, "").trim();
+    t = t.replace(/\s+/g, "");
+    return t;
+  }
+
   function getAutodlCreds() {
-    const token =
+    const token = normalizeAutodlToken(
       (($("autodlToken") && $("autodlToken").value) || "").trim() ||
-      localStorage.getItem(LS_AUTODL_TOKEN) ||
-      "";
+        localStorage.getItem(LS_AUTODL_TOKEN) ||
+        ""
+    );
     const uuid =
       (($("autodlUuid") && $("autodlUuid").value) || "").trim() ||
       localStorage.getItem(LS_AUTODL_UUID) ||
@@ -2517,12 +2526,11 @@
   async function autodlFetchInstanceList() {
     const c = getAutodlCreds();
     if (!c.token) return { ok: false, list: [], message: "未填 Token" };
-    const auth = /^Bearer\s/i.test(c.token) ? c.token : c.token;
     const res = await fetch(AUTODL_PROXY + "/api/v1/instance", {
       method: "POST",
       mode: "cors",
       headers: {
-        Authorization: auth,
+        Authorization: c.token,
         "Content-Type": "application/json",
       },
       body: JSON.stringify({ page_index: 1, page_size: 50 }),
@@ -2573,6 +2581,38 @@
       if ($("startApiUrl")) $("startApiUrl").value = start;
       localStorage.setItem("comfy_phone_start_api", start);
     }
+  }
+
+  async function autodlTestTokenOnly() {
+    persistAutodlCreds();
+    const c = getAutodlCreds();
+    if (!c.token) {
+      setConnStatus("请先填 AutoDL Token", "err");
+      return;
+    }
+    if (!c.token.startsWith("eyJ")) {
+      setConnStatus(
+        "Token 格式不对：应是 eyJ 开头的 JWT（不要带 Bearer，也不要用密码框自动填充）",
+        "err"
+      );
+      return;
+    }
+    setConnStatus("正在检测 Token…", "run");
+    const got = await autodlFetchInstanceList();
+    if (!got.ok) {
+      setConnStatus("失败: " + (got.message || "Token 无效"), "err");
+      return;
+    }
+    const names = got.list
+      .slice(0, 8)
+      .map(function (x) {
+        return (x.machine_alias || "") + " " + (x.uuid || "");
+      })
+      .join("；");
+    setConnStatus(
+      "Token 有效 · " + got.list.length + " 台：" + (names || "无实例"),
+      "ok"
+    );
   }
 
   async function autodlEnsureRunning(maxMs) {
@@ -3973,6 +4013,13 @@
     }
 
 
+    if ($("btnTestAutodlToken")) {
+      $("btnTestAutodlToken").addEventListener("click", function () {
+        autodlTestTokenOnly().catch(function (e) {
+          setConnStatus("失败: " + (e && e.message ? e.message : String(e)), "err");
+        });
+      });
+    }
     ["autodlToken", "autodlUuid"].forEach(function (id) {
       const el = $(id);
       if (!el) return;
