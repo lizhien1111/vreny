@@ -2409,6 +2409,136 @@
   }
 
 
+  function getAutodlCreds() {
+    const token =
+      (($("autodlToken") && $("autodlToken").value) || "").trim() ||
+      localStorage.getItem(LS_AUTODL_TOKEN) ||
+      "";
+    const uuid =
+      (($("autodlUuid") && $("autodlUuid").value) || "").trim() ||
+      localStorage.getItem(LS_AUTODL_UUID) ||
+      "";
+    return { token: token, uuid: uuid };
+  }
+
+  function persistAutodlCreds() {
+    const c = getAutodlCreds();
+    if (c.token) localStorage.setItem(LS_AUTODL_TOKEN, c.token);
+    else localStorage.removeItem(LS_AUTODL_TOKEN);
+    if (c.uuid) localStorage.setItem(LS_AUTODL_UUID, c.uuid);
+    else localStorage.removeItem(LS_AUTODL_UUID);
+  }
+
+  function loadAutodlCreds() {
+    if ($("autodlToken"))
+      $("autodlToken").value = localStorage.getItem(LS_AUTODL_TOKEN) || "";
+    if ($("autodlUuid"))
+      $("autodlUuid").value = localStorage.getItem(LS_AUTODL_UUID) || "";
+  }
+
+  /** AutoDL official power_off via CORS proxy (works even if Comfy is down). */
+  async function autodlPowerOffViaProxy() {
+    const c = getAutodlCreds();
+    if (!c.token || !c.uuid) return { ok: false, skip: true };
+    persistAutodlCreds();
+    const res = await fetch(AUTODL_PROXY + "/api/v1/instance/power_off", {
+      method: "POST",
+      mode: "cors",
+      headers: {
+        Authorization: c.token,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({ instance_uuid: c.uuid }),
+    });
+    const j = await res.json().catch(function () {
+      return {};
+    });
+    const code = j && (j.code === 0 || j.code === "Success" || j.success === true);
+    const ok = res.ok && (code || j.ok === true || !("code" in j));
+    return {
+      ok: !!ok,
+      skip: false,
+      status: res.status,
+      message:
+        (j && (j.msg || j.message || j.error)) ||
+        ("HTTP " + res.status),
+      raw: j,
+    };
+  }
+
+  async function powerOffViaStartApi() {
+    const apiBase = getStartApiBase();
+    if (!apiBase) return { ok: false, skip: true };
+    try {
+      const ctrl = new AbortController();
+      const t = setTimeout(function () {
+        ctrl.abort();
+      }, 15000);
+      const res = await fetch(apiBase + "/poweroff", {
+        method: "POST",
+        mode: "cors",
+        headers: { "Content-Type": "application/json" },
+        body: "{}",
+        signal: ctrl.signal,
+      });
+      clearTimeout(t);
+      const j = await res.json().catch(function () {
+        return {};
+      });
+      return {
+        ok: !!(res.ok && (j.ok !== false)),
+        skip: false,
+        message: (j && j.message) || ("HTTP " + res.status),
+      };
+    } catch (e) {
+      return {
+        ok: false,
+        skip: false,
+        message: e && e.message ? e.message : String(e),
+      };
+    }
+  }
+
+  async function powerOffViaComfyExt() {
+    try {
+      requireBase();
+    } catch (e) {
+      return { ok: false, skip: true, message: e.message };
+    }
+    const headers = { "Content-Type": "application/json" };
+    await fetch(apiUrl("/interrupt"), {
+      method: "POST",
+      headers: headers,
+      body: "{}",
+      mode: "cors",
+    }).catch(function () {});
+    await fetch(apiUrl("/queue"), {
+      method: "POST",
+      headers: headers,
+      body: JSON.stringify({ clear: true }),
+      mode: "cors",
+    }).catch(function () {});
+    const tries = [
+      { path: "/poweroff_instance", body: "{}" },
+      { path: "/api/poweroff_instance", body: "{}" },
+    ];
+    for (let i = 0; i < tries.length; i++) {
+      const p = tries[i];
+      try {
+        const res = await fetch(apiUrl(p.path), {
+          method: "POST",
+          headers: headers,
+          body: p.body,
+          mode: "cors",
+        });
+        if (res.ok || res.status === 200) {
+          return { ok: true, skip: false };
+        }
+      } catch (e) {}
+    }
+    return { ok: false, skip: false, message: "Comfy 关机扩展未响应" };
+  }
+
   async function powerOffInstance() {
     // RunPod path: stop via REST when credentials present
     if (getProvider() === "runpod") {
@@ -2421,10 +2551,19 @@
         return;
       }
     }
+    const creds = getAutodlCreds();
+    const hasProxy = !!(creds.token && creds.uuid);
+    const hasStart = !!getStartApiBase();
+    let hasComfy = false;
     try {
       requireBase();
-    } catch (e) {
-      setStatus(e.message, "err");
+      hasComfy = true;
+    } catch (e) {}
+    if (!hasProxy && !hasStart && !hasComfy) {
+      setStatus(
+        "关实例需要：填 AutoDL Token+UUID，或启动接口，或已连上的 Comfy 地址",
+        "err"
+      );
       return;
     }
     if (
@@ -2434,57 +2573,55 @@
     ) {
       return;
     }
-    if (!confirm("再确认一次：真的关实例？")) {
-      return;
-    }
     setStatus("正在关实例…", "run");
     cancelRequested = true;
     try {
-      const ok = await connectComfy();
-      if (!ok) throw new Error("未连接成功");
-      const headers = { "Content-Type": "application/json" };
-      await fetch(apiUrl("/interrupt"), {
-        method: "POST",
-        headers,
-        body: "{}",
-        mode: "cors",
-      }).catch(function () {});
-      await fetch(apiUrl("/queue"), {
-        method: "POST",
-        headers,
-        body: JSON.stringify({ clear: true }),
-        mode: "cors",
-      }).catch(function () {});
-      let offOk = false;
-      const tries = [
-        { path: "/poweroff_instance", body: "{}" },
-        { path: "/api/poweroff_instance", body: "{}" },
-      ];
-      for (const p of tries) {
-        try {
-          const res = await fetch(apiUrl(p.path), {
-            method: "POST",
-            headers,
-            body: p.body,
-            mode: "cors",
-          });
-          if (res.ok || res.status === 200) {
-            offOk = true;
-            break;
-          }
-        } catch (e) {}
+      // 1) AutoDL API (most reliable; no Comfy needed)
+      if (hasProxy) {
+        setStatus("正在经 AutoDL 接口关实例…", "run");
+        const r = await autodlPowerOffViaProxy();
+        if (r.ok) {
+          closeWs();
+          connectedOk = false;
+          setStatus("实例正在关机（AutoDL API）", "ok");
+          setConnStatus("未连接 · 实例关机中", "");
+          return;
+        }
+        if (!r.skip) {
+          setStatus("AutoDL 接口关失败: " + r.message + "，试其它方式…", "run");
+        }
       }
-      closeWs();
-      connectedOk = false;
-      if (offOk) {
-        setStatus("实例正在关机，公网即将断开", "ok");
-        setConnStatus("未连接 · 实例关机中", "");
-      } else {
-        setStatus(
-          "关实例接口不可用；可先「关机 Comfy」，再到 AutoDL 控制台关实例",
-          "err"
-        );
+      // 2) start API /poweroff (halts OS)
+      if (hasStart) {
+        setStatus("正在经启动接口关实例…", "run");
+        const r2 = await powerOffViaStartApi();
+        if (r2.ok) {
+          closeWs();
+          connectedOk = false;
+          setStatus("实例正在关机（启动接口）", "ok");
+          setConnStatus("未连接 · 实例关机中", "");
+          return;
+        }
+        if (!r2.skip) {
+          setStatus("启动接口关失败: " + r2.message + "，试 Comfy 扩展…", "run");
+        }
       }
+      // 3) Comfy custom node
+      if (hasComfy) {
+        setStatus("正在经 Comfy 扩展关实例…", "run");
+        const r3 = await powerOffViaComfyExt();
+        closeWs();
+        connectedOk = false;
+        if (r3.ok) {
+          setStatus("实例正在关机（Comfy 扩展）", "ok");
+          setConnStatus("未连接 · 实例关机中", "");
+          return;
+        }
+      }
+      setStatus(
+        "三条关实例路都失败了。请在启动页填 AutoDL Token 和实例 UUID 后再试，或到 AutoDL 控制台关机。",
+        "err"
+      );
     } catch (e) {
       console.error(e);
       setStatus("关实例失败: " + (e && e.message ? e.message : String(e)), "err");
@@ -3036,6 +3173,9 @@
   const LS_RP_PORT = "comfy_phone_runpod_port";
   const LS_RP_PROXY = "comfy_phone_runpod_proxy";
   const LS_PROVIDER = "comfy_phone_provider";
+  const LS_AUTODL_TOKEN = "comfy_phone_autodl_token";
+  const LS_AUTODL_UUID = "comfy_phone_autodl_uuid";
+  const AUTODL_PROXY = "https://comfy-autodl-proxy.comfyphone.workers.dev";
   const LS_MODEL = "comfy_phone_model";
 
   function setRunpodStatus(msg, kind) {
@@ -3606,6 +3746,13 @@
       });
     }
 
+
+    ["autodlToken", "autodlUuid"].forEach(function (id) {
+      const el = $(id);
+      if (!el) return;
+      el.addEventListener("change", persistAutodlCreds);
+      el.addEventListener("blur", persistAutodlCreds);
+    });
 
     if ($("startApiUrl")) {
       const persistApi = () => {

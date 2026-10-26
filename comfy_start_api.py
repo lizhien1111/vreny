@@ -8,7 +8,7 @@ ComfyUI 启动接口：轻量 HTTP 服务，供手机出图页点「拉起 Comfy
 端点：
   GET  /health  → {"ok":true,"comfy":true|false}
   GET  /status  → health + last start log snippet
-  POST /start   → 若 Comfy 未起则跑 boot_comfy.sh，返回 {ok, already, pid?, message}
+  POST /poweroff→ 关整机（停计费）\n  POST /start   → 若 Comfy 未起则跑 boot_comfy.sh，返回 {ok, already, pid?, message}
 
 环境变量：
   COMFY_START_PORT   默认 6008
@@ -268,6 +268,27 @@ def do_start() -> dict:
         return out
 
 
+
+def do_poweroff() -> dict:
+    """Halt the whole AutoDL instance (stops GPU billing)."""
+    def _halt():
+        for cmd in (
+            ["/usr/bin/shutdown", "-h", "now"],
+            ["shutdown", "-h", "now"],
+            ["poweroff"],
+            ["systemctl", "poweroff"],
+        ):
+            try:
+                subprocess.Popen(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+                return
+            except Exception:
+                continue
+        os._exit(0)
+
+    threading.Timer(0.8, _halt).start()
+    return {"ok": True, "status": "powering_off", "message": "instance halt scheduled"}
+
+
 class Handler(BaseHTTPRequestHandler):
     server_version = "ComfyStartAPI/1.0"
 
@@ -345,7 +366,7 @@ class Handler(BaseHTTPRequestHandler):
 
     def do_POST(self) -> None:
         path, qs = self._path()
-        if path != "/start":
+        if path not in ("/start", "/poweroff"):
             self._json(404, {"ok": False, "message": "not found"})
             return
         if not self._auth_ok(qs):
@@ -358,6 +379,9 @@ class Handler(BaseHTTPRequestHandler):
             n = 0
         if n > 0:
             self.rfile.read(n)
+        if path == "/poweroff":
+            self._json(200, do_poweroff())
+            return
         result = do_start()
         code = 200 if result.get("ok") else 503
         self._json(code, result)
