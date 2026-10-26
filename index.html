@@ -689,7 +689,7 @@
           spellcheck="false"
           placeholder="eyJ 开头的 JWT，不要带 Bearer"
         />
-        <p class="hint">从 AutoDL 网页 F12 → Network 里任一带 Authorization 的请求复制；不要用密码自动填充。</p>
+        <p class="hint">必须用网页登录后的 <strong>JWT</strong>（以 <code>eyJ</code> 开头，很长）。不要填「设置 → 开发者 Token」（那个走 api.autodl.com，填这里会一直「登录超时」）。电脑 F12 → Network → 点任意请求 → 请求头 Authorization。</p>
         <div class="row gap">
           <button type="button" class="btn btn-ghost" id="btnTestAutodlToken">检测 Token</button>
         </div>
@@ -924,10 +924,10 @@
     <div class="lightbox-info" id="lightboxInfo"></div>
   </div>
 
-  <script src="png-meta.js?v=boot-20261026c"></script>
-  <script src="workflow.js?v=boot-20261026c"></script>
-  <script src="gallery.js?v=boot-20261026c"></script>
-  <script src="app.js?v=boot-20261026c"></script>
+  <script src="png-meta.js?v=boot-20261026d"></script>
+  <script src="workflow.js?v=boot-20261026d"></script>
+  <script src="gallery.js?v=boot-20261026d"></script>
+  <script src="app.js?v=boot-20261026d"></script>
 
   <script>
     function googleTranslateElementInit() {

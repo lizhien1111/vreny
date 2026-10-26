@@ -2592,7 +2592,7 @@
     }
     if (!c.token.startsWith("eyJ")) {
       setConnStatus(
-        "Token 格式不对：应是 eyJ 开头的 JWT（不要带 Bearer，也不要用密码框自动填充）",
+        "这不是网页 JWT。开发者 Token 不能用在这里；请用 F12 里 Authorization 的 eyJ… 长串",
         "err"
       );
       return;
@@ -2600,7 +2600,11 @@
     setConnStatus("正在检测 Token…", "run");
     const got = await autodlFetchInstanceList();
     if (!got.ok) {
-      setConnStatus("失败: " + (got.message || "Token 无效"), "err");
+      var m = got.message || "Token 无效";
+      if (/登录超时|AuthorizeFailed|登录失败/.test(m)) {
+        m += " · 多半填成了开发者Token或过期JWT，需 eyJ 开头的网页 Authorization";
+      }
+      setConnStatus("失败: " + m, "err");
       return;
     }
     const names = got.list
