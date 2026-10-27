@@ -3822,7 +3822,12 @@
       let sn = 0;
       while (Date.now() < startDeadline) {
         sn += 1;
-        setConnStatus("请求启动接口… (" + sn + ")", "run");
+        setConnStatus(
+          sn <= 3
+            ? "请求启动接口… (" + sn + ")"
+            : "请求启动接口… (" + sn + ") · 若一直失败多半是实例未起 6008 自启",
+          "run"
+        );
         try {
           const ctrl = new AbortController();
           const tm = setTimeout(function () {
