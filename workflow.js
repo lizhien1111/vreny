@@ -64,7 +64,7 @@
     unet: "qwenIMAGEPHOTOGRAPHY_v10.safetensors",
     clip: "qwen_2.5_vl_7b.safetensors",
     vae: "qwen_image_vae.safetensors",
-    defaults: { steps: 10, cfg: 1.0, width: 896, height: 1536, sampler: "euler", scheduler: "simple" },
+    defaults: { steps: 10, cfg: 1.0, width: 896, height: 1536, sampler: "res_2s", scheduler: "bong_tangent" },
     neg: "",
   };
 
@@ -332,7 +332,7 @@
 
 
   /**
-   * Qwen-Image PHOTOGRAPHY_STYLE NSFW (defaults: euler / simple / 10 / CFG1 / ~896x1536).
+   * Qwen-Image PHOTOGRAPHY_STYLE NSFW (author defaults: res_2s / bong_tangent / 10 / CFG1 / ~896x1536).
    * No Lightning / NSFW LoRAs. Prompt via TextEncodeQwenImageEditPlus; neg = ConditioningZeroOut.
    */
   function buildPhotographyWorkflow(opts) {
