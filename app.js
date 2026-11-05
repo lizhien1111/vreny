@@ -2976,6 +2976,9 @@
     if (params.height != null && Number.isFinite(Number(params.height))) {
       $("height").value = String(Math.round(Number(params.height)));
     }
+    if (params.cfg != null && Number.isFinite(Number(params.cfg))) {
+      if ($("cfg")) $("cfg").value = String(Number(params.cfg));
+    }
     if (params.seed != null && Number.isFinite(Number(params.seed))) {
       $("seed").value = String(Math.round(Number(params.seed)));
     }
@@ -3175,13 +3178,14 @@
     if ($("steps")) $("steps").value = String(d.steps);
     if ($("width")) $("width").value = String(d.width);
     if ($("height")) $("height").value = String(d.height);
+    if ($("cfg") && d.cfg != null) $("cfg").value = String(d.cfg);
     if ($("negative") && (fillEmptyNeg || !($("negative").value || "").trim())) {
       $("negative").value = preset.neg || "";
       $("negative").placeholder = preset.neg
         ? "默认已按模型填入，可改"
         : "此模型通常留空；可按需写负面";
     }
-    // cfg is hardcoded per model in generate; store on select dataset
+    // keep dataset in sync as a secondary fallback
     const sel = $("modelSelect");
     if (sel) sel.dataset.cfg = String(d.cfg);
   }
@@ -3235,11 +3239,18 @@
     const preset = (W && W.getPreset && W.getPreset(modelId)) || null;
     const defaultNeg = (preset && preset.neg != null) ? preset.neg : ((W && W.DEFAULT_NEG) || "");
     const negative = ($("negative").value || "").trim() || defaultNeg;
-    const cfgDefault = preset && preset.defaults ? preset.defaults.cfg : 1.0;
-    const cfgEl = $("modelSelect");
-    const cfg = (cfgEl && cfgEl.dataset.cfg != null && cfgEl.dataset.cfg !== "")
-      ? Number(cfgEl.dataset.cfg)
-      : cfgDefault;
+    const cfgDefault = preset && preset.defaults && preset.defaults.cfg != null
+      ? Number(preset.defaults.cfg)
+      : 1.0;
+    let cfg = Number($("cfg") && $("cfg").value);
+    if (!Number.isFinite(cfg) || cfg <= 0) {
+      const sel = $("modelSelect");
+      if (sel && sel.dataset.cfg != null && sel.dataset.cfg !== "") {
+        cfg = Number(sel.dataset.cfg);
+      }
+    }
+    if (!Number.isFinite(cfg) || cfg <= 0) cfg = cfgDefault;
+    if ($("cfg")) $("cfg").value = String(cfg);
 
     try {
       requireBase();

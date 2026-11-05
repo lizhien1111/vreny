@@ -831,10 +831,14 @@
     <label for="negative">负面提示词</label>
     <textarea id="negative"></textarea>
 
-    <div class="row">
+    <div class="row3">
       <div>
         <label for="steps">步数</label>
         <input id="steps" type="number" min="1" max="150" value="30" />
+      </div>
+      <div>
+        <label for="cfg">CFG</label>
+        <input id="cfg" type="number" min="0.1" max="20" step="0.1" value="1.0" />
       </div>
       <div>
         <label for="batch">张数</label>
@@ -926,9 +930,9 @@
   </div>
 
   <script src="png-meta.js?v=boot-20261026e"></script>
-  <script src="workflow.js?v=boot-20261105a"></script>
+  <script src="workflow.js?v=boot-20261105b"></script>
   <script src="gallery.js?v=boot-20261026e"></script>
-  <script src="app.js?v=boot-20261105a"></script>
+  <script src="app.js?v=boot-20261105b"></script>
 
   <script>
     function googleTranslateElementInit() {
