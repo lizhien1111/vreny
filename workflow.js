@@ -1,6 +1,6 @@
 /**
  * Phone page API workflow builders.
- * Lustify Krea Turbo / Moss Image bf16 + Qwen bf16 TE + full VAE / WAI & Hassaku (Illustrious SDXL).
+ * Lustify Krea Turbo / Moss Image bf16 + Qwen bf16 TE + full VAE / WAI & Hassaku (Illustrious SDXL) / Qwen PHOTOGRAPHY.
  */
 (function (root) {
   const LUSTIFY = {
@@ -57,7 +57,18 @@
     neg: "",
   };
 
-  const PRESETS = { lustify: LUSTIFY, moss: MOSS, wai: WAI, hassaku: HASSAKU, krea2svr: KREA2SVR };
+
+  const PHOTOGRAPHY = {
+    id: "photography",
+    label: "千问 PHOTOGRAPHY",
+    unet: "qwenIMAGEPHOTOGRAPHY_v10.safetensors",
+    clip: "qwen_2.5_vl_7b.safetensors",
+    vae: "qwen_image_vae.safetensors",
+    defaults: { steps: 10, cfg: 1.0, width: 896, height: 1536, sampler: "res_2s", scheduler: "bong_tangent" },
+    neg: "",
+  };
+
+  const PRESETS = { lustify: LUSTIFY, moss: MOSS, wai: WAI, hassaku: HASSAKU, krea2svr: KREA2SVR, photography: PHOTOGRAPHY };
 
   /** Krea2_SeedVR2_7B_FP8: Krea2 first pass (+realism LoRA) -> SeedVR2 7B FP8 upscale. Muted IPAdapter/CN/LayerStyle/compile nodes omitted. */
   function buildKrea2SeedVR2Workflow(opts) {
@@ -319,17 +330,86 @@
     };
   }
 
+
+  /**
+   * Qwen-Image PHOTOGRAPHY_STYLE NSFW (author defaults: res_2s / bong_tangent / 10 / CFG1 / ~896x1536).
+   * No Lightning / NSFW LoRAs. Prompt via TextEncodeQwenImageEditPlus; neg = ConditioningZeroOut.
+   */
+  function buildPhotographyWorkflow(opts) {
+    const P = PHOTOGRAPHY;
+    const text = String(opts.prompt || "");
+    const steps = Number(opts.steps) || P.defaults.steps;
+    const width = Math.max(16, Math.round((Number(opts.width) || P.defaults.width) / 16) * 16);
+    const height = Math.max(16, Math.round((Number(opts.height) || P.defaults.height) / 16) * 16);
+    const seed = Number(opts.seed) || 0;
+    const cfg = opts.cfg != null ? Number(opts.cfg) : P.defaults.cfg;
+    const sampler = (opts.sampler != null && String(opts.sampler)) || P.defaults.sampler;
+    const scheduler = (opts.scheduler != null && String(opts.scheduler)) || P.defaults.scheduler;
+    const prefix = opts.prefix || "photography_" + seed;
+
+    return {
+      "1": {
+        class_type: "UNETLoader",
+        inputs: { unet_name: P.unet, weight_dtype: "default" },
+      },
+      "2": {
+        class_type: "CLIPLoader",
+        inputs: { clip_name: P.clip, type: "qwen_image", device: "default" },
+      },
+      "3": {
+        class_type: "VAELoader",
+        inputs: { vae_name: P.vae },
+      },
+      "4": {
+        class_type: "TextEncodeQwenImageEditPlus",
+        inputs: { clip: ["2", 0], prompt: text },
+      },
+      "5": {
+        class_type: "ConditioningZeroOut",
+        inputs: { conditioning: ["4", 0] },
+      },
+      "6": {
+        class_type: "EmptyLatentImage",
+        inputs: { width: width, height: height, batch_size: 1 },
+      },
+      "7": {
+        class_type: "KSampler",
+        inputs: {
+          seed: seed,
+          steps: steps,
+          cfg: cfg,
+          sampler_name: sampler,
+          scheduler: scheduler,
+          denoise: 1.0,
+          model: ["1", 0],
+          positive: ["4", 0],
+          negative: ["5", 0],
+          latent_image: ["6", 0],
+        },
+      },
+      "8": {
+        class_type: "VAEDecode",
+        inputs: { samples: ["7", 0], vae: ["3", 0] },
+      },
+      "9": {
+        class_type: "SaveImage",
+        inputs: { filename_prefix: prefix, images: ["8", 0] },
+      },
+    };
+  }
+
   function getPreset(modelId) {
     return PRESETS[modelId] || LUSTIFY;
   }
 
   /**
    * @param {object} opts
-   * @param {string} [opts.model] lustify|moss|wai|hassaku
+   * @param {string} [opts.model] lustify|moss|wai|hassaku|krea2svr|photography
    */
   function buildWorkflow(opts) {
     const model = String((opts && opts.model) || "lustify").toLowerCase();
     if (model === "krea2svr") return buildKrea2SeedVR2Workflow(opts || {});
+    if (model === "photography") return buildPhotographyWorkflow(opts || {});
     if (model === "moss") return buildMossWorkflow(opts || {});
     if (model === "wai") return buildSdxlCheckpointWorkflow(opts || {}, WAI);
     if (model === "hassaku") return buildSdxlCheckpointWorkflow(opts || {}, HASSAKU);
@@ -343,7 +423,9 @@
     WAI,
     HASSAKU,
     KREA2SVR,
+    PHOTOGRAPHY,
     buildKrea2SeedVR2Workflow,
+    buildPhotographyWorkflow,
     DEFAULT_NEG: LUSTIFY.neg,
     getPreset,
     buildLustifyWorkflow,

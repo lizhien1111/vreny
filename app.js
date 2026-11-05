@@ -3179,7 +3179,7 @@
       $("negative").value = preset.neg || "";
       $("negative").placeholder = preset.neg
         ? "默认已按模型填入，可改"
-        : "Moss 通常留空；可按需写负面";
+        : "此模型通常留空；可按需写负面";
     }
     // cfg is hardcoded per model in generate; store on select dataset
     const sel = $("modelSelect");
