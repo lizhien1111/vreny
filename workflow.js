@@ -1,6 +1,6 @@
 /**
  * Phone page API workflow builders.
- * Lustify Krea Turbo / Moss Image bf16 + Qwen bf16 TE + full VAE / WAI & Hassaku (Illustrious SDXL) / Qwen PHOTOGRAPHY.
+ * Lustify Krea Turbo (+图生图/局部重绘) / Moss Image bf16 + Qwen bf16 TE + full VAE / WAI & Hassaku (Illustrious SDXL) / Qwen PHOTOGRAPHY.
  */
 (function (root) {
   const LUSTIFY = {
@@ -14,6 +14,31 @@
       "extra heads, multiple heads, two heads, three heads, duplicate face, twin heads, conjoined, " +
       "extra limbs, fused bodies, bad anatomy, deformed face, mutated hands, " +
       "blurry, lowres, watermark, text, logo, cartoon, 3d render, plastic skin, penis, cock, dick, male genitals",
+  };
+
+
+  const LUSTIFY_I2I = {
+    id: "lustify_i2i",
+    label: "Lustify 图生图",
+    unet: LUSTIFY.unet,
+    clip: LUSTIFY.clip,
+    vae: LUSTIFY.vae,
+    needsImage: true,
+    needsMask: false,
+    defaults: { steps: 20, cfg: 1.0, width: 1280, height: 2560, sampler: "euler", scheduler: "simple", denoise: 0.45 },
+    neg: LUSTIFY.neg,
+  };
+
+  const LUSTIFY_INPAINT = {
+    id: "lustify_inpaint",
+    label: "Lustify 局部重绘",
+    unet: LUSTIFY.unet,
+    clip: LUSTIFY.clip,
+    vae: LUSTIFY.vae,
+    needsImage: true,
+    needsMask: true,
+    defaults: { steps: 20, cfg: 1.0, width: 1280, height: 2560, sampler: "euler", scheduler: "simple", denoise: 0.55 },
+    neg: LUSTIFY.neg,
   };
 
   const MOSS = {
@@ -68,7 +93,7 @@
     neg: "",
   };
 
-  const PRESETS = { lustify: LUSTIFY, moss: MOSS, wai: WAI, hassaku: HASSAKU, krea2svr: KREA2SVR, photography: PHOTOGRAPHY };
+  const PRESETS = { lustify: LUSTIFY, lustify_i2i: LUSTIFY_I2I, lustify_inpaint: LUSTIFY_INPAINT, moss: MOSS, wai: WAI, hassaku: HASSAKU, krea2svr: KREA2SVR, photography: PHOTOGRAPHY };
 
   /** Krea2_SeedVR2_7B_FP8: Krea2 first pass (+realism LoRA) -> SeedVR2 7B FP8 upscale. Muted IPAdapter/CN/LayerStyle/compile nodes omitted. */
   function buildKrea2SeedVR2Workflow(opts) {
@@ -398,16 +423,107 @@
     };
   }
 
+
+  /**
+   * Lustify img2img: same UNET/CLIP/VAE stack as text2img, LoadImage -> VAEEncode -> KSampler(denoise).
+   * opts.imageName = filename already on Comfy input/ via /upload/image
+   * opts.denoise default 0.45
+   */
+  function buildLustifyImg2ImgWorkflow(opts) {
+    const text = String(opts.prompt || "");
+    const neg =
+      opts.negative != null && String(opts.negative).length
+        ? String(opts.negative)
+        : LUSTIFY_I2I.neg;
+    const steps = Number(opts.steps) || LUSTIFY_I2I.defaults.steps;
+    const seed = Number(opts.seed) || 0;
+    const cfg = opts.cfg != null ? Number(opts.cfg) : LUSTIFY_I2I.defaults.cfg;
+    const denoise = opts.denoise != null ? Number(opts.denoise) : LUSTIFY_I2I.defaults.denoise;
+    const prefix = opts.prefix || "lustify_i2i_" + seed;
+    const imageName = String(opts.imageName || "").trim();
+    if (!imageName) throw new Error("图生图需要先上传参考图");
+
+    return {
+      "1": { class_type: "UNETLoader", inputs: { unet_name: LUSTIFY.unet, weight_dtype: "default" } },
+      "2": { class_type: "CLIPLoader", inputs: { clip_name: LUSTIFY.clip, type: "krea2", device: "default" } },
+      "3": { class_type: "VAELoader", inputs: { vae_name: LUSTIFY.vae } },
+      "4": { class_type: "ModelSamplingAuraFlow", inputs: { model: ["1", 0], shift: 4.0, sampling: "flow" } },
+      "5": { class_type: "CLIPTextEncode", inputs: { text: text, clip: ["2", 0] } },
+      "6": { class_type: "CLIPTextEncode", inputs: { text: neg, clip: ["2", 0] } },
+      "11": { class_type: "LoadImage", inputs: { image: imageName } },
+      "12": { class_type: "VAEEncode", inputs: { pixels: ["11", 0], vae: ["3", 0] } },
+      "8": {
+        class_type: "KSampler",
+        inputs: {
+          seed: seed, steps: steps, cfg: cfg, sampler_name: "euler", scheduler: "simple",
+          denoise: denoise, model: ["4", 0], positive: ["5", 0], negative: ["6", 0], latent_image: ["12", 0],
+        },
+      },
+      "9": { class_type: "VAEDecode", inputs: { samples: ["8", 0], vae: ["3", 0] } },
+      "10": { class_type: "SaveImage", inputs: { filename_prefix: prefix, images: ["9", 0] } },
+    };
+  }
+
+  /**
+   * Lustify masked inpaint. Needs imageName + maskName on Comfy input/.
+   * Mask: white = redraw. Phone page has no MaskEditor — upload a B/W mask or use desktop Comfy.
+   * opts.denoise default 0.55; grow_mask_by default 8.
+   */
+  function buildLustifyInpaintWorkflow(opts) {
+    const text = String(opts.prompt || "");
+    const neg =
+      opts.negative != null && String(opts.negative).length
+        ? String(opts.negative)
+        : LUSTIFY_INPAINT.neg;
+    const steps = Number(opts.steps) || LUSTIFY_INPAINT.defaults.steps;
+    const seed = Number(opts.seed) || 0;
+    const cfg = opts.cfg != null ? Number(opts.cfg) : LUSTIFY_INPAINT.defaults.cfg;
+    const denoise = opts.denoise != null ? Number(opts.denoise) : LUSTIFY_INPAINT.defaults.denoise;
+    const grow = opts.growMask != null ? Number(opts.growMask) : 8;
+    const prefix = opts.prefix || "lustify_inpaint_" + seed;
+    const imageName = String(opts.imageName || "").trim();
+    const maskName = String(opts.maskName || "").trim();
+    if (!imageName) throw new Error("局部重绘需要先上传原图");
+    if (!maskName) throw new Error("局部重绘需要蒙版图（白=重画）。手机无涂抹：用电脑 Comfy 打开 Lustify_detail_inpaint.json，或另传黑白蒙版 PNG");
+
+    return {
+      "1": { class_type: "UNETLoader", inputs: { unet_name: LUSTIFY.unet, weight_dtype: "default" } },
+      "2": { class_type: "CLIPLoader", inputs: { clip_name: LUSTIFY.clip, type: "krea2", device: "default" } },
+      "3": { class_type: "VAELoader", inputs: { vae_name: LUSTIFY.vae } },
+      "4": { class_type: "ModelSamplingAuraFlow", inputs: { model: ["1", 0], shift: 4.0, sampling: "flow" } },
+      "5": { class_type: "CLIPTextEncode", inputs: { text: text, clip: ["2", 0] } },
+      "6": { class_type: "CLIPTextEncode", inputs: { text: neg, clip: ["2", 0] } },
+      "11": { class_type: "LoadImage", inputs: { image: imageName } },
+      "13": { class_type: "LoadImage", inputs: { image: maskName } },
+      "14": { class_type: "ImageToMask", inputs: { image: ["13", 0], channel: "red" } },
+      "12": {
+        class_type: "VAEEncodeForInpaint",
+        inputs: { pixels: ["11", 0], vae: ["3", 0], mask: ["14", 0], grow_mask_by: grow },
+      },
+      "8": {
+        class_type: "KSampler",
+        inputs: {
+          seed: seed, steps: steps, cfg: cfg, sampler_name: "euler", scheduler: "simple",
+          denoise: denoise, model: ["4", 0], positive: ["5", 0], negative: ["6", 0], latent_image: ["12", 0],
+        },
+      },
+      "9": { class_type: "VAEDecode", inputs: { samples: ["8", 0], vae: ["3", 0] } },
+      "10": { class_type: "SaveImage", inputs: { filename_prefix: prefix, images: ["9", 0] } },
+    };
+  }
+
   function getPreset(modelId) {
     return PRESETS[modelId] || LUSTIFY;
   }
 
   /**
    * @param {object} opts
-   * @param {string} [opts.model] lustify|moss|wai|hassaku|krea2svr|photography
+   * @param {string} [opts.model] lustify|lustify_i2i|lustify_inpaint|moss|wai|hassaku|krea2svr|photography
    */
   function buildWorkflow(opts) {
     const model = String((opts && opts.model) || "lustify").toLowerCase();
+    if (model === "lustify_i2i") return buildLustifyImg2ImgWorkflow(opts || {});
+    if (model === "lustify_inpaint") return buildLustifyInpaintWorkflow(opts || {});
     if (model === "krea2svr") return buildKrea2SeedVR2Workflow(opts || {});
     if (model === "photography") return buildPhotographyWorkflow(opts || {});
     if (model === "moss") return buildMossWorkflow(opts || {});
@@ -419,6 +535,8 @@
   root.ComfyPhoneWorkflow = {
     PRESETS,
     LUSTIFY,
+    LUSTIFY_I2I,
+    LUSTIFY_INPAINT,
     MOSS,
     WAI,
     HASSAKU,
@@ -426,6 +544,8 @@
     PHOTOGRAPHY,
     buildKrea2SeedVR2Workflow,
     buildPhotographyWorkflow,
+    buildLustifyImg2ImgWorkflow,
+    buildLustifyInpaintWorkflow,
     DEFAULT_NEG: LUSTIFY.neg,
     getPreset,
     buildLustifyWorkflow,

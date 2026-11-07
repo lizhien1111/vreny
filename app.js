@@ -45,6 +45,12 @@
   let importedApiPrompt = null;
   let importMode = "none"; // none | params | api
 
+  /** Img2img / inpaint source on phone page */
+  let i2iImageFile = null;
+  let i2iMaskFile = null;
+  let i2iPreviewUrl = null;
+
+
   function getBase() {
     const fromBase = ($("baseUrl") && $("baseUrl").value) || "";
     const fromBoot = ($("bootUrl") && $("bootUrl").value) || "";
@@ -3167,6 +3173,139 @@
     return String(v).toLowerCase();
   }
 
+
+  function modelNeedsImage(modelId) {
+    const id = String(modelId || "").toLowerCase();
+    return id === "lustify_i2i" || id === "lustify_inpaint";
+  }
+
+  function modelNeedsMask(modelId) {
+    return String(modelId || "").toLowerCase() === "lustify_inpaint";
+  }
+
+  function syncI2iPanel(modelId) {
+    const panel = $("i2iPanel");
+    const maskRow = $("i2iMaskRow");
+    const hint = $("i2iHint");
+    const denoiseEl = $("denoise");
+    const need = modelNeedsImage(modelId);
+    if (panel) panel.hidden = !need;
+    if (maskRow) maskRow.hidden = !modelNeedsMask(modelId);
+    if (!need) return;
+    const W = window.ComfyPhoneWorkflow;
+    const preset = W && W.getPreset ? W.getPreset(modelId) : null;
+    const d = (preset && preset.defaults && preset.defaults.denoise != null)
+      ? Number(preset.defaults.denoise)
+      : (modelNeedsMask(modelId) ? 0.55 : 0.45);
+    if (denoiseEl && (!denoiseEl.dataset.userSet || denoiseEl.dataset.model !== modelId)) {
+      denoiseEl.value = String(d);
+      denoiseEl.dataset.model = modelId;
+      denoiseEl.dataset.userSet = "";
+    }
+    if (hint) {
+      if (modelNeedsMask(modelId)) {
+        hint.textContent =
+          "局部重绘：上传原图 + 黑白蒙版（白=重画）。手机不能涂抹；也可在电脑 Comfy 用 Lustify_detail_inpaint.json。denoise 默认 0.55。";
+      } else {
+        hint.textContent =
+          "图生图：选一张参考图，改提示词后生成。denoise 默认 0.45（越小越像原图）。宽高跟原图走，下面宽高框可不改。";
+      }
+    }
+  }
+
+  async function uploadImageToComfy(file, preferredName) {
+    if (!file) throw new Error("没有要上传的图片");
+    const base = requireBase();
+    const name = preferredName || file.name || ("phone_i2i_" + Date.now() + ".png");
+    const safe = String(name).replace(/[^\w.\-]+/g, "_");
+    const fd = new FormData();
+    fd.append("image", file, safe);
+    fd.append("overwrite", "true");
+    const res = await fetch(base + "/upload/image", { method: "POST", body: fd, mode: "cors" });
+    if (!res.ok) {
+      const t = await res.text().catch(function () { return ""; });
+      throw new Error("上传图片失败 HTTP " + res.status + (t ? ": " + t.slice(0, 120) : ""));
+    }
+    let data = null;
+    try { data = await res.json(); } catch (e) {}
+    const uploaded = (data && (data.name || (data.image && data.image.name))) || safe;
+    return String(uploaded);
+  }
+
+  function setI2iFileLabel(kind, file) {
+    const nameEl = $(kind === "mask" ? "i2iMaskName" : "i2iImageName");
+    const clearBtn = $(kind === "mask" ? "btnClearI2iMask" : "btnClearI2iImage");
+    if (nameEl) nameEl.textContent = file ? ("已选: " + (file.name || "image")) : (kind === "mask" ? "未选蒙版" : "未选图");
+    if (clearBtn) clearBtn.hidden = !file;
+  }
+
+  function bindI2iPanel() {
+    const imgInput = $("i2iImageFile");
+    const maskInput = $("i2iMaskFile");
+    const denoiseEl = $("denoise");
+    if (denoiseEl && !denoiseEl.dataset.bound) {
+      denoiseEl.dataset.bound = "1";
+      denoiseEl.addEventListener("input", function () {
+        denoiseEl.dataset.userSet = "1";
+      });
+    }
+    if (imgInput && !imgInput.dataset.bound) {
+      imgInput.dataset.bound = "1";
+      imgInput.addEventListener("change", function () {
+        const f = imgInput.files && imgInput.files[0];
+        i2iImageFile = f || null;
+        setI2iFileLabel("image", i2iImageFile);
+        const prev = $("i2iPreview");
+        if (i2iPreviewUrl) {
+          try { URL.revokeObjectURL(i2iPreviewUrl); } catch (e) {}
+          i2iPreviewUrl = null;
+        }
+        if (prev) {
+          if (i2iImageFile) {
+            i2iPreviewUrl = URL.createObjectURL(i2iImageFile);
+            prev.src = i2iPreviewUrl;
+            prev.style.display = "block";
+          } else {
+            prev.removeAttribute("src");
+            prev.style.display = "none";
+          }
+        }
+      });
+    }
+    if (maskInput && !maskInput.dataset.bound) {
+      maskInput.dataset.bound = "1";
+      maskInput.addEventListener("change", function () {
+        const f = maskInput.files && maskInput.files[0];
+        i2iMaskFile = f || null;
+        setI2iFileLabel("mask", i2iMaskFile);
+      });
+    }
+    const clearImg = $("btnClearI2iImage");
+    if (clearImg && !clearImg.dataset.bound) {
+      clearImg.dataset.bound = "1";
+      clearImg.addEventListener("click", function () {
+        i2iImageFile = null;
+        if (imgInput) imgInput.value = "";
+        setI2iFileLabel("image", null);
+        const prev = $("i2iPreview");
+        if (i2iPreviewUrl) {
+          try { URL.revokeObjectURL(i2iPreviewUrl); } catch (e) {}
+          i2iPreviewUrl = null;
+        }
+        if (prev) { prev.removeAttribute("src"); prev.style.display = "none"; }
+      });
+    }
+    const clearMask = $("btnClearI2iMask");
+    if (clearMask && !clearMask.dataset.bound) {
+      clearMask.dataset.bound = "1";
+      clearMask.addEventListener("click", function () {
+        i2iMaskFile = null;
+        if (maskInput) maskInput.value = "";
+        setI2iFileLabel("mask", null);
+      });
+    }
+  }
+
   function applyModelPreset(modelId, opts) {
     opts = opts || {};
     const W = window.ComfyPhoneWorkflow;
@@ -3252,6 +3391,19 @@
     if (!Number.isFinite(cfg) || cfg <= 0) cfg = cfgDefault;
     if ($("cfg")) $("cfg").value = String(cfg);
 
+    if (!useImportedApi && modelNeedsImage(modelId)) {
+      if (!i2iImageFile) {
+        setStatus(modelNeedsMask(modelId)
+          ? "局部重绘请先选原图和蒙版（或用电脑 Comfy 涂蒙版）"
+          : "图生图请先选参考图", "err");
+        return;
+      }
+      if (modelNeedsMask(modelId) && !i2iMaskFile) {
+        setStatus("局部重绘需要蒙版图（白=重画）。手机页无涂抹：另传黑白蒙版，或电脑 Comfy 用 Lustify_detail_inpaint.json", "err");
+        return;
+      }
+    }
+
     try {
       requireBase();
     } catch (e) {
@@ -3302,7 +3454,7 @@
             ? Meta.patchApiPrompt(importedApiPrompt, { seed: seed, steps: steps })
             : JSON.parse(JSON.stringify(importedApiPrompt));
         } else {
-          workflow = W.buildWorkflow({
+          const buildOpts = {
             prompt,
             negative,
             steps,
@@ -3312,7 +3464,36 @@
             cfg: Number.isFinite(cfg) ? cfg : cfgDefault,
             model: modelId,
             prefix: (modelId || "phone") + "_" + seed,
-          });
+          };
+          if (modelNeedsImage(modelId)) {
+            if (!i2iImageFile) {
+              throw new Error(modelNeedsMask(modelId)
+                ? "局部重绘请先选原图（可选蒙版；无蒙版请用电脑 Comfy）"
+                : "图生图请先选参考图");
+            }
+            if (modelNeedsMask(modelId) && !i2iMaskFile) {
+              throw new Error("局部重绘需要蒙版图（白=重画）。手机不能涂抹：另传黑白蒙版，或用电脑 Comfy 打开 Lustify_detail_inpaint.json");
+            }
+            let denoise = Number($("denoise") && $("denoise").value);
+            if (!Number.isFinite(denoise) || denoise <= 0) {
+              denoise = modelNeedsMask(modelId) ? 0.55 : 0.45;
+            }
+            if (denoise > 1) denoise = 1;
+            buildOpts.denoise = denoise;
+            setStatus("上传参考图… " + (n + 1) + "/" + batch, "run");
+            buildOpts.imageName = await uploadImageToComfy(
+              i2iImageFile,
+              "phone_i2i_" + seed + "_" + (i2iImageFile.name || "src.png")
+            );
+            if (modelNeedsMask(modelId) && i2iMaskFile) {
+              setStatus("上传蒙版… " + (n + 1) + "/" + batch, "run");
+              buildOpts.maskName = await uploadImageToComfy(
+                i2iMaskFile,
+                "phone_mask_" + seed + "_" + (i2iMaskFile.name || "mask.png")
+              );
+            }
+          }
+          workflow = W.buildWorkflow(buildOpts);
         }
 
         openProgressWs();

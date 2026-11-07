@@ -818,12 +818,38 @@
     <label for="modelSelect">模型</label>
     <select id="modelSelect" class="notranslate" translate="no">
       <option value="lustify">Lustify Krea Turbo</option>
+      <option value="lustify_i2i">Lustify 图生图</option>
+      <option value="lustify_inpaint">Lustify 局部重绘</option>
       <option value="moss">Moss Image bf16</option>
       <option value="wai">WAI Illustrious</option>
       <option value="hassaku">Hassaku Illustrious</option>
       <option value="krea2svr">Krea2 + SeedVR2 7B 放大</option>
       <option value="photography">千问 PHOTOGRAPHY</option>
     </select>
+
+    <div id="i2iPanel" class="i2i-panel" hidden>
+      <p class="png-import-hint" id="i2iHint">图生图：选一张参考图，改提示词后生成。denoise 默认 0.45（越小越像原图）。</p>
+      <div class="png-import-row" style="margin-top:8px">
+        <label class="btn btn-ghost btn-import" id="btnI2iImage">选参考图<input id="i2iImageFile" type="file" accept="image/png,image/jpeg,image/webp,image/*" /></label>
+        <button type="button" class="btn btn-ghost" id="btnClearI2iImage" hidden style="flex:0.45">清除</button>
+      </div>
+      <p class="png-import-hint" id="i2iImageName" style="margin-top:6px">未选图</p>
+      <div id="i2iMaskRow" hidden style="margin-top:10px">
+        <p class="png-import-hint">局部重绘需要蒙版（白=重画）。手机页不能涂抹：请另传黑白蒙版 PNG，或用电脑 Comfy 打开 Lustify_detail_inpaint.json 右键 MaskEditor。</p>
+        <div class="png-import-row" style="margin-top:8px">
+          <label class="btn btn-ghost btn-import" id="btnI2iMask">选蒙版图<input id="i2iMaskFile" type="file" accept="image/png,image/jpeg,image/webp,image/*" /></label>
+          <button type="button" class="btn btn-ghost" id="btnClearI2iMask" hidden style="flex:0.45">清除</button>
+        </div>
+        <p class="png-import-hint" id="i2iMaskName" style="margin-top:6px">未选蒙版</p>
+      </div>
+      <div class="row" style="margin-top:10px">
+        <div style="flex:1">
+          <label for="denoise">denoise（重绘强度）</label>
+          <input id="denoise" type="number" min="0.05" max="1" step="0.05" value="0.45" />
+        </div>
+      </div>
+      <img id="i2iPreview" alt="" style="display:none;max-width:100%;margin-top:8px;border-radius:8px" />
+    </div>
 
     <label for="prompt">提示词</label>
     <textarea id="prompt" placeholder="描述你想生成的画面…"></textarea>
@@ -930,9 +956,9 @@
   </div>
 
   <script src="png-meta.js?v=boot-20261026e"></script>
-  <script src="workflow.js?v=boot-20261105b"></script>
+  <script src="workflow.js?v=boot-20261107i2i"></script>
   <script src="gallery.js?v=boot-20261026e"></script>
-  <script src="app.js?v=boot-20261105b"></script>
+  <script src="app.js?v=boot-20261107i2i"></script>
 
   <script>
     function googleTranslateElementInit() {
