@@ -3337,9 +3337,11 @@
       sel.value = saved;
     }
     applyModelPreset(sel.value, { fillEmptyNeg: !($("negative") && ($("negative").value || "").trim()) });
+    syncI2iPanel(sel.value);
     sel.addEventListener("change", function () {
       localStorage.setItem(LS_MODEL, sel.value);
       applyModelPreset(sel.value, { fillEmptyNeg: true });
+      syncI2iPanel(sel.value);
       setStatus("已切到 " + (sel.options[sel.selectedIndex].text || sel.value) + " · 参数已按默认填入", "ok");
     });
   }
@@ -4312,6 +4314,7 @@
     // Always start on boot so user can reconnect / open Comfy
     showPage("boot");
     bindPngImport();
+    bindI2iPanel();
     initModelSelect();
     $("btnGen").addEventListener("click", generate);
     if ($("btnCancel")) $("btnCancel").addEventListener("click", cancelTask);
