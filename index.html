@@ -551,6 +551,28 @@
     [hidden] { display: none !important; }
     .page[hidden] { display: none !important; }
 
+    .i2i-panel {
+      margin-top: 12px;
+      padding: 12px;
+      background: var(--card);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+    }
+    .i2i-upload-block {
+      margin-top: 10px;
+      padding: 10px;
+      border: 1px dashed var(--border);
+      border-radius: 10px;
+      background: rgba(255,255,255,0.02);
+    }
+    .i2i-upload-block .i2i-upload-title {
+      margin: 0 0 8px;
+      font-size: 0.85rem;
+      font-weight: 600;
+      color: var(--text);
+    }
+    .i2i-upload-block .png-import-hint { margin-top: 6px; }
+
     .boot-step {
       margin-top: 14px;
       padding: 14px;
@@ -827,20 +849,24 @@
       <option value="photography">千问 PHOTOGRAPHY</option>
     </select>
 
-    <div id="i2iPanel" class="i2i-panel" hidden>
+    <div id="i2iPanel" class="i2i-panel notranslate" hidden translate="no">
       <p class="png-import-hint" id="i2iHint">图生图：选一张参考图，改提示词后生成。denoise 默认 0.45（越小越像原图）。</p>
-      <div class="png-import-row" style="margin-top:8px">
-        <label class="btn btn-ghost btn-import" id="btnI2iImage">选参考图<input id="i2iImageFile" type="file" accept="image/png,image/jpeg,image/webp,image/*" /></label>
-        <button type="button" class="btn btn-ghost" id="btnClearI2iImage" hidden style="flex:0.45">清除</button>
+      <div class="i2i-upload-block" id="i2iImageBlock">
+        <p class="i2i-upload-title" id="i2iImageTitle">① 选参考图</p>
+        <div class="png-import-row">
+          <label class="btn btn-ghost btn-import" id="btnI2iImage"><span id="btnI2iImageText">选参考图</span><input id="i2iImageFile" type="file" accept="image/png,image/jpeg,image/webp,image/*" /></label>
+          <button type="button" class="btn btn-ghost" id="btnClearI2iImage" hidden style="flex:0.45">清除</button>
+        </div>
+        <p class="png-import-hint" id="i2iImageName">未选图</p>
       </div>
-      <p class="png-import-hint" id="i2iImageName" style="margin-top:6px">未选图</p>
-      <div id="i2iMaskRow" hidden style="margin-top:10px">
-        <p class="png-import-hint">局部重绘需要蒙版（白=重画）。手机页不能涂抹：请另传黑白蒙版 PNG，或用电脑 Comfy 打开 Lustify_detail_inpaint.json 右键 MaskEditor。</p>
+      <div class="i2i-upload-block" id="i2iMaskRow" hidden>
+        <p class="i2i-upload-title">② 选蒙版图（白=重画）</p>
+        <p class="png-import-hint">局部重绘第二张必传：黑白蒙版 PNG。手机不能涂抹；也可用电脑 Comfy 的 Lustify_detail_inpaint.json。</p>
         <div class="png-import-row" style="margin-top:8px">
-          <label class="btn btn-ghost btn-import" id="btnI2iMask">选蒙版图<input id="i2iMaskFile" type="file" accept="image/png,image/jpeg,image/webp,image/*" /></label>
+          <label class="btn btn-ghost btn-import" id="btnI2iMask"><span id="btnI2iMaskText">选蒙版图</span><input id="i2iMaskFile" type="file" accept="image/png,image/jpeg,image/webp,image/*" /></label>
           <button type="button" class="btn btn-ghost" id="btnClearI2iMask" hidden style="flex:0.45">清除</button>
         </div>
-        <p class="png-import-hint" id="i2iMaskName" style="margin-top:6px">未选蒙版</p>
+        <p class="png-import-hint" id="i2iMaskName">未选蒙版</p>
       </div>
       <div class="row" style="margin-top:10px">
         <div style="flex:1">
@@ -956,9 +982,9 @@
   </div>
 
   <script src="png-meta.js?v=boot-20261026e"></script>
-  <script src="workflow.js?v=boot-20261107i2i"></script>
+  <script src="workflow.js?v=boot-20261107inpaint2"></script>
   <script src="gallery.js?v=boot-20261026e"></script>
-  <script src="app.js?v=boot-20261107i2i"></script>
+  <script src="app.js?v=boot-20261107inpaint2"></script>
 
   <script>
     function googleTranslateElementInit() {

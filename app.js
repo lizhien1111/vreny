@@ -77,6 +77,7 @@
       localStorage.setItem("comfy_phone_page", goApp ? "app" : "boot");
     } catch (e) {}
     if (goApp) {
+      try { syncI2iPanel(currentModelId()); } catch (e) {}
       // ensure gallery renders when first entering app
       try {
         if (typeof renderGallery === "function") renderGallery();
@@ -3183,29 +3184,46 @@
     return String(modelId || "").toLowerCase() === "lustify_inpaint";
   }
 
+  function setElHidden(el, hide) {
+    if (!el) return;
+    if (hide) {
+      el.setAttribute("hidden", "");
+      el.hidden = true;
+    } else {
+      el.removeAttribute("hidden");
+      el.hidden = false;
+    }
+  }
+
   function syncI2iPanel(modelId) {
     const panel = $("i2iPanel");
     const maskRow = $("i2iMaskRow");
     const hint = $("i2iHint");
     const denoiseEl = $("denoise");
+    const imgTitle = $("i2iImageTitle");
+    const imgBtnText = $("btnI2iImageText");
     const need = modelNeedsImage(modelId);
-    if (panel) panel.hidden = !need;
-    if (maskRow) maskRow.hidden = !modelNeedsMask(modelId);
+    const needMask = modelNeedsMask(modelId);
+    setElHidden(panel, !need);
+    // 局部重绘必须同时露原图+蒙版两个上传；图生图只露原图
+    setElHidden(maskRow, !(need && needMask));
     if (!need) return;
+    if (imgTitle) imgTitle.textContent = needMask ? "① 选原图" : "① 选参考图";
+    if (imgBtnText) imgBtnText.textContent = needMask ? "选原图" : "选参考图";
     const W = window.ComfyPhoneWorkflow;
     const preset = W && W.getPreset ? W.getPreset(modelId) : null;
     const d = (preset && preset.defaults && preset.defaults.denoise != null)
       ? Number(preset.defaults.denoise)
-      : (modelNeedsMask(modelId) ? 0.55 : 0.45);
+      : (needMask ? 0.55 : 0.45);
     if (denoiseEl && (!denoiseEl.dataset.userSet || denoiseEl.dataset.model !== modelId)) {
       denoiseEl.value = String(d);
       denoiseEl.dataset.model = modelId;
       denoiseEl.dataset.userSet = "";
     }
     if (hint) {
-      if (modelNeedsMask(modelId)) {
+      if (needMask) {
         hint.textContent =
-          "局部重绘：上传原图 + 黑白蒙版（白=重画）。手机不能涂抹；也可在电脑 Comfy 用 Lustify_detail_inpaint.json。denoise 默认 0.55。";
+          "局部重绘：下面会出两个上传——①原图 ②蒙版（白=重画）。缺蒙版出不了。denoise 默认 0.55。";
       } else {
         hint.textContent =
           "图生图：选一张参考图，改提示词后生成。denoise 默认 0.45（越小越像原图）。宽高跟原图走，下面宽高框可不改。";
