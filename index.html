@@ -497,6 +497,21 @@
     }
     .lang-select:focus { border-color: var(--accent); }
 
+    .alt-entry {
+      margin: 0 0 12px;
+    }
+    .alt-entry a {
+      display: inline-flex;
+      align-items: center;
+      min-height: 44px;
+      padding: 0 2px;
+      color: var(--accent);
+      font-size: 0.95rem;
+      font-weight: 600;
+      text-decoration: none;
+    }
+    .alt-entry a:active { opacity: 0.7; }
+
     .save-github-row {
       display: flex;
       align-items: center;
@@ -678,6 +693,7 @@
         <option value="id">Indonesia</option>
       </select>
     </div>
+    <p class="alt-entry"><a href="venice.html">Venice 出图</a></p>
     <div id="google_translate_element" aria-hidden="true"></div>
 
     <!-- ========== 启动页 ========== -->

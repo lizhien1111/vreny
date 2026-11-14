@@ -1,6 +1,6 @@
 # 手机出图页（ComfyUI）· 可独立托管
 
-轻量手机网页：启动页开实例 / 填公网 / **拉起 Comfy** → 改提示词出图 → 图库本机保存。
+轻量手机网页：启动页开实例 / 填公网 / **拉起 Comfy** → 改提示词出图 → 图库本机保存。另有独立的 [Venice Seedream 5.5 出图页](https://lizhien1111.github.io/vreny/venice.html)。
 
 在线：[https://lizhien1111.github.io/vreny/](https://lizhien1111.github.io/vreny/)
 
@@ -8,11 +8,16 @@
 
 | 文件 | 说明 |
 |------|------|
-| `index.html` / `app.js` / `workflow.js` / `gallery.js` | 前端（Pages 只部署这四个） |
+| `index.html` / `app.js` / `workflow.js` / `gallery.js` | 前端（Comfy 出图页） |
+| `venice.html` | Venice Seedream 5.5 手机出图页（直接调官方接口） |
 | `boot_comfy.sh` / `start_comfy.sh` | 实例内一键拉起 Comfy（6006 + CORS） |
 | `comfy_start_api.py` | **启动接口**：`POST /start` 代跑上面的脚本（默认 6008） |
 | `start_api.sh` | nohup 启动接口，适合挂开机脚本 |
 | `cors_proxy.py` | 可选：同源反代，避开 CORS |
+
+## Venice 出图
+
+打开 [venice.html](https://lizhien1111.github.io/vreny/venice.html)，在页面里填写 **Venice API Key**（只存在本机浏览器 `localStorage`，不会上传到本站）。写提示词，选分辨率 / 宽高比，用滑条调步数（默认 20，最高 50），点出图。也可从首页「Venice 出图」进入。
 
 ## 手机页用法
 

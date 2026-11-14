@@ -1,0 +1,799 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+  <meta name="theme-color" content="#0f1115" />
+  <meta name="apple-mobile-web-app-capable" content="yes" />
+  <meta name="apple-mobile-web-app-title" content="Venice 出图" />
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+  <title>Venice 出图 · Seedream 5.5</title>
+  <style>
+    :root {
+      --bg: #0f1115;
+      --card: #1a1d24;
+      --border: #2a2f3a;
+      --text: #e8eaed;
+      --muted: #9aa0a6;
+      --accent: #6c8cff;
+      --accent-press: #5570e0;
+      --ok: #3dd68c;
+      --err: #ff6b6b;
+      --run: #f0c14b;
+      --radius: 14px;
+      --tap: 48px;
+    }
+    * { box-sizing: border-box; }
+    html, body {
+      margin: 0;
+      padding: 0;
+      background: var(--bg);
+      color: var(--text);
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "PingFang SC",
+        "Hiragino Sans GB", "Microsoft YaHei", sans-serif;
+      font-size: 16px;
+      line-height: 1.45;
+      -webkit-tap-highlight-color: transparent;
+    }
+    .wrap {
+      max-width: 560px;
+      margin: 0 auto;
+      padding: 16px 16px calc(40px + env(safe-area-inset-bottom));
+    }
+    .title-row {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 10px;
+      margin: 8px 0 4px;
+    }
+    h1 {
+      font-size: 1.25rem;
+      font-weight: 650;
+      margin: 0;
+      letter-spacing: 0.02em;
+    }
+    .back-link {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      min-height: 44px;
+      padding: 0 4px;
+      color: var(--accent);
+      font-size: 0.95rem;
+      font-weight: 600;
+      text-decoration: none;
+      white-space: nowrap;
+    }
+    .back-link:active { opacity: 0.7; }
+    .sub {
+      color: var(--muted);
+      font-size: 0.95rem;
+      margin: 0 0 16px;
+    }
+    label {
+      display: block;
+      font-size: 0.9rem;
+      color: var(--muted);
+      margin: 14px 0 6px;
+      font-weight: 500;
+    }
+    .label-row {
+      display: flex;
+      align-items: baseline;
+      justify-content: space-between;
+      gap: 8px;
+      margin: 14px 0 6px;
+    }
+    .label-row label { margin: 0; }
+    .hint {
+      color: var(--muted);
+      font-size: 0.88rem;
+      margin: 6px 0 0;
+      line-height: 1.45;
+    }
+    input[type="text"],
+    input[type="password"],
+    input[type="number"],
+    textarea,
+    select {
+      width: 100%;
+      min-height: var(--tap);
+      padding: 10px 12px;
+      border-radius: 12px;
+      border: 1px solid var(--border);
+      background: var(--card);
+      color: var(--text);
+      font-size: 16px;
+      outline: none;
+      -webkit-appearance: none;
+      appearance: none;
+      font-family: inherit;
+    }
+    textarea {
+      min-height: 132px;
+      resize: vertical;
+      line-height: 1.4;
+    }
+    textarea#negative { min-height: 80px; }
+    input:focus, textarea:focus, select:focus {
+      border-color: var(--accent);
+    }
+    .key-row, .seed-row {
+      display: grid;
+      grid-template-columns: 1fr auto;
+      gap: 8px;
+      align-items: stretch;
+    }
+    .seg {
+      display: grid;
+      grid-template-columns: repeat(3, 1fr);
+      gap: 8px;
+    }
+    .seg-btn, .ratio-btn {
+      display: inline-flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      min-height: var(--tap);
+      padding: 8px 6px;
+      border-radius: 12px;
+      border: 1px solid var(--border);
+      background: var(--card);
+      color: var(--text);
+      font-size: 0.95rem;
+      font-weight: 600;
+      font-family: inherit;
+      cursor: pointer;
+      user-select: none;
+    }
+    .ratio-btn small {
+      font-size: 0.72rem;
+      font-weight: 500;
+      color: var(--muted);
+      margin-top: 2px;
+    }
+    .seg-btn.is-on, .ratio-btn.is-on {
+      border-color: var(--accent);
+      background: rgba(108, 140, 255, 0.16);
+      color: #fff;
+    }
+    .seg-btn.is-on:active, .ratio-btn.is-on:active,
+    .seg-btn:active, .ratio-btn:active {
+      background: rgba(108, 140, 255, 0.28);
+    }
+    .ratios {
+      display: grid;
+      grid-template-columns: repeat(4, 1fr);
+      gap: 8px;
+    }
+    .steps-row {
+      display: grid;
+      grid-template-columns: 1fr 72px;
+      gap: 8px;
+      align-items: center;
+    }
+    input[type="range"] {
+      width: 100%;
+      height: 36px;
+      accent-color: var(--accent);
+    }
+    .switch-row {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 12px;
+      margin-top: 16px;
+      padding: 12px 14px;
+      background: var(--card);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      min-height: 56px;
+    }
+    .switch-row .sw-text { flex: 1; }
+    .switch-row strong {
+      display: block;
+      font-size: 1rem;
+      font-weight: 650;
+    }
+    .switch-row span {
+      display: block;
+      color: var(--muted);
+      font-size: 0.85rem;
+      margin-top: 2px;
+    }
+    .switch {
+      position: relative;
+      width: 52px;
+      height: 32px;
+      flex-shrink: 0;
+    }
+    .switch input {
+      position: absolute;
+      opacity: 0;
+      width: 52px;
+      height: 32px;
+      margin: 0;
+      cursor: pointer;
+    }
+    .switch i {
+      display: block;
+      width: 52px;
+      height: 32px;
+      border-radius: 999px;
+      background: #2a2f3a;
+      pointer-events: none;
+      transition: background 0.15s;
+    }
+    .switch i::after {
+      content: "";
+      position: absolute;
+      top: 3px;
+      left: 3px;
+      width: 26px;
+      height: 26px;
+      border-radius: 50%;
+      background: #fff;
+      transition: transform 0.15s;
+    }
+    .switch input:checked + i { background: var(--accent); }
+    .switch input:checked + i::after { transform: translateX(20px); }
+    .btn {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      min-height: var(--tap);
+      padding: 0 16px;
+      border: none;
+      border-radius: var(--radius);
+      font-size: 1rem;
+      font-weight: 600;
+      cursor: pointer;
+      user-select: none;
+      font-family: inherit;
+      color: var(--text);
+    }
+    .btn:disabled {
+      opacity: 0.45;
+      cursor: not-allowed;
+    }
+    .btn-primary {
+      width: 100%;
+      margin-top: 18px;
+      background: var(--accent);
+      color: #fff;
+      font-size: 1.08rem;
+      min-height: 52px;
+    }
+    .btn-primary:not(:disabled):active { background: var(--accent-press); }
+    .btn-ghost {
+      background: var(--card);
+      color: var(--text);
+      border: 1px solid var(--border);
+    }
+    .btn-ghost:active { background: #22262f; }
+    .btn-save {
+      width: 100%;
+      margin-top: 10px;
+      background: #243028;
+      color: var(--ok);
+      border: 1px solid #2f4a3a;
+    }
+    .btn-save:active { background: #2a3a30; }
+    .status {
+      margin-top: 12px;
+      padding: 12px 14px;
+      border-radius: 10px;
+      background: var(--card);
+      border: 1px solid var(--border);
+      font-size: 0.95rem;
+      color: var(--muted);
+      word-break: break-word;
+      white-space: pre-wrap;
+    }
+    .status--run { color: var(--run); border-color: #4a4020; }
+    .status--ok { color: var(--ok); border-color: #2f4a3a; }
+    .status--err { color: var(--err); border-color: #4a2a2a; }
+    .preview-box {
+      margin-top: 14px;
+      background: linear-gradient(180deg, #1a1f2a 0%, #12151c 100%);
+      border: 1px dashed #3a4150;
+      border-radius: var(--radius);
+      overflow: hidden;
+      min-height: 220px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+    }
+    .preview-box.has-image {
+      border-style: solid;
+      border-color: var(--border);
+      background: #0b0d12;
+    }
+    .preview-box img {
+      display: block;
+      width: 100%;
+      height: auto;
+      max-height: 70vh;
+      object-fit: contain;
+    }
+    .placeholder {
+      color: var(--muted);
+      padding: 36px 20px;
+      text-align: center;
+      font-size: 0.95rem;
+      line-height: 1.55;
+    }
+    .gallery h2 {
+      font-size: 1rem;
+      font-weight: 650;
+      margin: 24px 0 10px;
+    }
+    .thumbs {
+      display: grid;
+      grid-template-columns: repeat(3, 1fr);
+      gap: 8px;
+    }
+    .thumbs button {
+      padding: 0;
+      border: 2px solid transparent;
+      border-radius: 10px;
+      overflow: hidden;
+      background: #0b0d12;
+      min-height: 96px;
+      cursor: pointer;
+    }
+    .thumbs button.is-on { border-color: var(--accent); }
+    .thumbs img {
+      display: block;
+      width: 100%;
+      height: 96px;
+      object-fit: cover;
+    }
+    .model-tag {
+      display: inline-block;
+      margin: 0 0 12px;
+      padding: 6px 10px;
+      border-radius: 999px;
+      border: 1px solid var(--border);
+      background: var(--card);
+      color: var(--muted);
+      font-size: 0.85rem;
+      font-weight: 600;
+    }
+  </style>
+</head>
+<body>
+  <div class="wrap">
+    <div class="title-row">
+      <h1>Venice 出图</h1>
+      <a class="back-link" href="./">Comfy 出图</a>
+    </div>
+    <p class="sub">用 Seedream 5.5 直接出图。API Key 只保存在这台手机的浏览器里，不会上传到本站，也不会写入代码。</p>
+    <span class="model-tag">模型 seedream-v5-5</span>
+
+    <label for="apiKey">Venice API Key</label>
+    <div class="key-row">
+      <input id="apiKey" type="password" autocomplete="off" autocapitalize="off" autocorrect="off" spellcheck="false" placeholder="sk- 或 Venice 后台复制的密钥" />
+      <button type="button" class="btn btn-ghost" id="btnToggleKey" aria-label="显示或隐藏密钥">显示</button>
+    </div>
+    <p class="hint">在 venice.ai 设置里复制 Key，填在这里即可。点出图时只发往 Venice 官方接口。可点「清除」删掉本机保存的密钥。</p>
+    <button type="button" class="btn btn-ghost" id="btnClearKey" style="width:100%;margin-top:8px">清除本机密钥</button>
+
+    <label for="prompt">提示词</label>
+    <textarea id="prompt" maxlength="10000" placeholder="例如：一只坐在窗边的橘猫，柔和午后光线，照片级写实"></textarea>
+
+    <label for="negative">负向提示（可选）</label>
+    <textarea id="negative" maxlength="7500" placeholder="不想出现的内容，可留空。部分模型可能忽略此项。"></textarea>
+
+    <label>分辨率</label>
+    <div class="seg" id="resSeg" role="radiogroup" aria-label="分辨率">
+      <button type="button" class="seg-btn is-on" data-value="1K">1K</button>
+      <button type="button" class="seg-btn" data-value="1.5K">1.5K</button>
+      <button type="button" class="seg-btn" data-value="2K">2K</button>
+    </div>
+    <p class="hint">默认 1K，更省费用；2K 更清晰也更贵。</p>
+
+    <label>宽高比</label>
+    <div class="ratios" id="ratioSeg" role="radiogroup" aria-label="宽高比">
+      <button type="button" class="ratio-btn is-on" data-value="1:1">1:1<small>方形</small></button>
+      <button type="button" class="ratio-btn" data-value="9:16">9:16<small>手机竖图</small></button>
+      <button type="button" class="ratio-btn" data-value="2:3">2:3<small>竖图</small></button>
+      <button type="button" class="ratio-btn" data-value="3:4">3:4<small>竖图</small></button>
+      <button type="button" class="ratio-btn" data-value="16:9">16:9<small>横图</small></button>
+      <button type="button" class="ratio-btn" data-value="3:2">3:2<small>横图</small></button>
+      <button type="button" class="ratio-btn" data-value="4:3">4:3<small>横图</small></button>
+      <button type="button" class="ratio-btn" data-value="21:9">21:9<small>超宽</small></button>
+    </div>
+
+    <div class="label-row">
+      <label for="steps">步数</label>
+      <span class="hint" style="margin:0" id="stepsHint">默认 20，最高 50</span>
+    </div>
+    <div class="steps-row">
+      <input id="stepsRange" type="range" min="1" max="50" step="1" value="20" />
+      <input id="steps" type="number" min="1" max="50" step="1" value="20" inputmode="numeric" aria-label="步数" />
+    </div>
+
+    <label for="seed">随机种子（可选）</label>
+    <div class="seed-row">
+      <input id="seed" type="number" inputmode="numeric" placeholder="留空则随机" />
+      <button type="button" class="btn btn-ghost" id="btnRandSeed">随机</button>
+    </div>
+    <p class="hint">范围 -999999999 到 999999999。想复现同一张图时再填。</p>
+
+    <div class="switch-row">
+      <div class="sw-text">
+        <strong>安全审核</strong>
+        <span>默认关闭。开启后会对成人内容打码。接口默认是开启，本页会显式把关闭状态传过去。</span>
+      </div>
+      <label class="switch">
+        <input type="checkbox" id="safeMode" />
+        <i></i>
+      </label>
+    </div>
+
+    <button type="button" class="btn btn-primary" id="btnGenerate">出图</button>
+    <div class="status" id="status">填好 Key 和提示词后点出图。</div>
+
+    <div class="preview-box" id="previewBox">
+      <p class="placeholder" id="placeholder">出图后显示在这里。手机可长按图片保存到相册。</p>
+      <img id="preview" alt="生成的图片" hidden />
+    </div>
+    <button type="button" class="btn btn-save" id="btnSave" hidden>保存到相册</button>
+
+    <section class="gallery" id="gallery" hidden>
+      <h2>本次出图</h2>
+      <div class="thumbs" id="thumbs"></div>
+    </section>
+  </div>
+
+  <script>
+    (function () {
+      const API = "https://api.venice.ai/api/v1/image/generate";
+      const MODEL = "seedream-v5-5";
+      const LS_KEY = "vreny.venice.apiKey";
+      const LS_SET = "vreny.venice.settings";
+      const MAX_GALLERY = 12;
+
+      const $ = (id) => document.getElementById(id);
+      const apiKeyEl = $("apiKey");
+      const promptEl = $("prompt");
+      const negativeEl = $("negative");
+      const stepsEl = $("steps");
+      const stepsRange = $("stepsRange");
+      const seedEl = $("seed");
+      const safeModeEl = $("safeMode");
+      const statusEl = $("status");
+      const preview = $("preview");
+      const previewBox = $("previewBox");
+      const placeholder = $("placeholder");
+      const btnGen = $("btnGenerate");
+      const btnSave = $("btnSave");
+      const gallery = $("gallery");
+      const thumbs = $("thumbs");
+
+      let resolution = "1K";
+      let aspectRatio = "1:1";
+      let currentItem = null;
+      const sessionItems = [];
+
+      function setStatus(text, kind) {
+        statusEl.textContent = text;
+        statusEl.className = "status" + (kind ? " status--" + kind : "");
+      }
+
+      function selected(groupId, value) {
+        document.querySelectorAll("#" + groupId + " button").forEach((btn) => {
+          btn.classList.toggle("is-on", btn.dataset.value === value);
+        });
+      }
+
+      $("resSeg").addEventListener("click", (e) => {
+        const btn = e.target.closest("button[data-value]");
+        if (!btn) return;
+        resolution = btn.dataset.value;
+        selected("resSeg", resolution);
+        saveSettings();
+      });
+
+      $("ratioSeg").addEventListener("click", (e) => {
+        const btn = e.target.closest("button[data-value]");
+        if (!btn) return;
+        aspectRatio = btn.dataset.value;
+        selected("ratioSeg", aspectRatio);
+        saveSettings();
+      });
+
+      function clampSteps(n) {
+        n = parseInt(n, 10);
+        if (!Number.isFinite(n)) n = 20;
+        return Math.min(50, Math.max(1, n));
+      }
+
+      function syncSteps(n, from) {
+        n = clampSteps(n);
+        if (from !== "num") stepsEl.value = String(n);
+        if (from !== "range") stepsRange.value = String(n);
+        saveSettings();
+      }
+
+      stepsRange.addEventListener("input", () => syncSteps(stepsRange.value, "range"));
+      stepsEl.addEventListener("input", () => syncSteps(stepsEl.value, "num"));
+      stepsEl.addEventListener("change", () => syncSteps(stepsEl.value, "num"));
+
+      $("btnToggleKey").addEventListener("click", () => {
+        const hide = apiKeyEl.type === "password";
+        apiKeyEl.type = hide ? "text" : "password";
+        $("btnToggleKey").textContent = hide ? "隐藏" : "显示";
+      });
+
+      apiKeyEl.addEventListener("change", () => {
+        const v = apiKeyEl.value.trim();
+        if (v) localStorage.setItem(LS_KEY, v);
+        else localStorage.removeItem(LS_KEY);
+      });
+
+      $("btnClearKey").addEventListener("click", () => {
+        apiKeyEl.value = "";
+        localStorage.removeItem(LS_KEY);
+        setStatus("已清除本机保存的密钥。", "ok");
+      });
+
+      $("btnRandSeed").addEventListener("click", () => {
+        const n = Math.floor(Math.random() * 1999999999) - 999999999;
+        seedEl.value = String(n);
+      });
+
+      safeModeEl.addEventListener("change", saveSettings);
+      promptEl.addEventListener("change", saveSettings);
+      negativeEl.addEventListener("change", saveSettings);
+      seedEl.addEventListener("change", saveSettings);
+
+      function saveSettings() {
+        try {
+          localStorage.setItem(LS_SET, JSON.stringify({
+            prompt: promptEl.value,
+            negative: negativeEl.value,
+            resolution,
+            aspectRatio,
+            steps: clampSteps(stepsEl.value),
+            seed: seedEl.value,
+            safeMode: !!safeModeEl.checked
+          }));
+        } catch (e) { /* quota */ }
+      }
+
+      function loadSettings() {
+        const savedKey = localStorage.getItem(LS_KEY);
+        if (savedKey) apiKeyEl.value = savedKey;
+        try {
+          const s = JSON.parse(localStorage.getItem(LS_SET) || "null");
+          if (!s) return;
+          if (typeof s.prompt === "string") promptEl.value = s.prompt;
+          if (typeof s.negative === "string") negativeEl.value = s.negative;
+          if (s.resolution) {
+            resolution = s.resolution;
+            selected("resSeg", resolution);
+          }
+          if (s.aspectRatio) {
+            aspectRatio = s.aspectRatio;
+            selected("ratioSeg", aspectRatio);
+          }
+          if (s.steps) syncSteps(s.steps, "both");
+          if (typeof s.seed === "string" || typeof s.seed === "number") seedEl.value = s.seed;
+          if (typeof s.safeMode === "boolean") safeModeEl.checked = s.safeMode;
+        } catch (e) { /* ignore */ }
+      }
+
+      function toDataUrl(raw) {
+        if (!raw) return "";
+        if (raw.startsWith("data:")) return raw;
+        return "data:image/png;base64," + raw.replace(/\s/g, "");
+      }
+
+      function showItem(item) {
+        currentItem = item;
+        preview.src = item.dataUrl;
+        preview.hidden = false;
+        placeholder.hidden = true;
+        previewBox.classList.add("has-image");
+        btnSave.hidden = false;
+        document.querySelectorAll("#thumbs button").forEach((b) => {
+          b.classList.toggle("is-on", b.dataset.id === item.id);
+        });
+      }
+
+      function addToGallery(item) {
+        sessionItems.unshift(item);
+        if (sessionItems.length > MAX_GALLERY) sessionItems.pop();
+        gallery.hidden = false;
+        thumbs.innerHTML = "";
+        sessionItems.forEach((it) => {
+          const btn = document.createElement("button");
+          btn.type = "button";
+          btn.dataset.id = it.id;
+          btn.setAttribute("aria-label", "查看这张图");
+          const img = document.createElement("img");
+          img.src = it.dataUrl;
+          img.alt = "";
+          btn.appendChild(img);
+          btn.addEventListener("click", () => showItem(it));
+          thumbs.appendChild(btn);
+        });
+      }
+
+      function parseError(status, body, headers) {
+        let obj = body;
+        if (typeof body === "string") {
+          try { obj = JSON.parse(body); } catch (e) { obj = { error: body }; }
+        }
+        obj = obj || {};
+        const msg = obj.error || obj.message || (typeof body === "string" ? body : "") || "";
+        const code = String(obj.code || obj.reason || "");
+        const blob = (msg + " " + code + " " + JSON.stringify(obj)).toLowerCase();
+
+        if (status === 401) {
+          return "密钥无效或已过期，请检查 API Key 后重试。" + (msg ? "\n" + msg : "");
+        }
+        if (status === 402 || code === "INSUFFICIENT_BALANCE" || code === "PAYMENT_REQUIRED" || /insufficient|balance|payment required/.test(blob)) {
+          return "余额不足，请到 venice.ai 充值后再试。" + (msg ? "\n" + msg : "");
+        }
+        if (
+          status === 422 ||
+          (headers && headers.get("x-venice-is-content-violation") === "true") ||
+          /content.?polic|content.?violation|moderat|safety/.test(blob)
+        ) {
+          return "审核未通过：提示词或生成内容被拒绝，请修改后再试。" + (msg ? "\n" + msg : "");
+        }
+        if (status === 403) {
+          return "无权访问：密钥可能限制了来源 IP，或权限不足。" + (msg ? "\n" + msg : "");
+        }
+        if (status === 429) return "请求太频繁，请稍后再试。" + (msg ? "\n" + msg : "");
+        if (status === 503) return "模型繁忙，请稍后再试。";
+        if (status === 400) return "参数有误：" + (msg || "请检查步数、比例或提示词。");
+        return "出图失败" + (status ? "（" + status + "）" : "") + "：" + (msg || "未知错误");
+      }
+
+      async function generate() {
+        const key = apiKeyEl.value.trim();
+        const prompt = promptEl.value.trim();
+        if (!key) {
+          setStatus("请先填写 Venice API Key。", "err");
+          apiKeyEl.focus();
+          return;
+        }
+        if (!prompt) {
+          setStatus("请先填写提示词。", "err");
+          promptEl.focus();
+          return;
+        }
+
+        const steps = clampSteps(stepsEl.value);
+        syncSteps(steps, "both");
+        localStorage.setItem(LS_KEY, key);
+        saveSettings();
+
+        const body = {
+          model: MODEL,
+          prompt,
+          resolution,
+          aspect_ratio: aspectRatio,
+          steps,
+          format: "png",
+          safe_mode: !!safeModeEl.checked
+        };
+        const neg = negativeEl.value.trim();
+        if (neg) body.negative_prompt = neg;
+        const seedRaw = seedEl.value.trim();
+        if (seedRaw !== "") {
+          const seed = parseInt(seedRaw, 10);
+          if (!Number.isFinite(seed) || seed < -999999999 || seed > 999999999) {
+            setStatus("种子须在 -999999999 到 999999999 之间，或不填。", "err");
+            return;
+          }
+          body.seed = seed;
+        }
+
+        btnGen.disabled = true;
+        setStatus("正在出图，可能需要几十秒，请稍候…", "run");
+
+        try {
+          const res = await fetch(API, {
+            method: "POST",
+            headers: {
+              Authorization: "Bearer " + key,
+              "Content-Type": "application/json"
+            },
+            body: JSON.stringify(body)
+          });
+
+          const rawText = await res.text();
+          let data = null;
+          try { data = rawText ? JSON.parse(rawText) : null; } catch (e) { data = null; }
+
+          if (!res.ok) {
+            setStatus(parseError(res.status, data || rawText, res.headers), "err");
+            return;
+          }
+
+          const images = (data && Array.isArray(data.images)) ? data.images : [];
+          if (!images.length) {
+            if (data && data.content_policy_violation_count) {
+              setStatus("审核未通过：内容被拒绝，没有返回图片。请修改提示词后再试。", "err");
+            } else {
+              setStatus("接口成功但没有返回图片。", "err");
+            }
+            return;
+          }
+
+          if (res.headers.get("x-venice-is-content-violation") === "true") {
+            setStatus("图片已生成，但接口标记可能违反内容规则。", "err");
+          }
+
+          const dataUrl = toDataUrl(images[0]);
+          const item = {
+            id: String(Date.now()),
+            dataUrl,
+            prompt,
+            resolution,
+            aspectRatio,
+            steps
+          };
+          showItem(item);
+          addToGallery(item);
+
+          let ok = "出图完成。可点「保存到相册」，或长按图片保存。";
+          if (res.headers.get("x-venice-is-blurred") === "true") {
+            ok += " 当前图因安全审核被打码，可关闭「安全审核」后重试。";
+          }
+          setStatus(ok, "ok");
+        } catch (err) {
+          const m = String((err && err.message) || err || "");
+          if (/failed to fetch|networkerror|load failed/i.test(m)) {
+            setStatus("网络错误，无法连上 Venice。请检查网络后重试。", "err");
+          } else {
+            setStatus("出图失败：" + (m || "未知错误"), "err");
+          }
+        } finally {
+          btnGen.disabled = false;
+        }
+      }
+
+      async function saveCurrent() {
+        if (!currentItem) return;
+        const name = "seedream-" + currentItem.resolution + "-" + currentItem.id + ".png";
+        try {
+          const res = await fetch(currentItem.dataUrl);
+          const blob = await res.blob();
+          const file = new File([blob], name, { type: "image/png" });
+          if (navigator.canShare && navigator.canShare({ files: [file] })) {
+            try {
+              await navigator.share({ files: [file], title: name });
+              setStatus("已打开系统分享，可选「存储图像」保存到相册。", "ok");
+              return;
+            } catch (e) {
+              if (e && e.name === "AbortError") return;
+            }
+          }
+          const url = URL.createObjectURL(blob);
+          const a = document.createElement("a");
+          a.href = url;
+          a.download = name;
+          document.body.appendChild(a);
+          a.click();
+          a.remove();
+          setTimeout(() => URL.revokeObjectURL(url), 2000);
+          setStatus("已开始下载。若没有弹出，请长按图片保存到相册。", "ok");
+        } catch (e) {
+          setStatus("保存失败，请直接长按图片存到相册。", "err");
+        }
+      }
+
+      btnGen.addEventListener("click", generate);
+      btnSave.addEventListener("click", saveCurrent);
+      loadSettings();
+    })();
+  </script>
+</body>
+</html>
