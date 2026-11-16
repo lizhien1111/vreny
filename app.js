@@ -172,10 +172,15 @@
     }
     localStorage.setItem("comfy_phone_base", base);
     setConnStatus("连接中…", "run");
+    const ctrl = new AbortController();
+    const timer = setTimeout(function () {
+      ctrl.abort();
+    }, 8000);
     try {
       const res = await fetch(base + "/system_stats", {
         method: "GET",
         mode: "cors",
+        signal: ctrl.signal,
       });
       if (!res.ok) throw new Error("HTTP " + res.status);
       const data = await res.json().catch(() => ({}));
@@ -192,6 +197,10 @@
       return true;
     } catch (e) {
       connectedOk = false;
+      if (e && (e.name === "AbortError" || /aborted/i.test((e && e.message) || ""))) {
+        setConnStatus("失败: 连接超时，Comfy 未响应", "err");
+        return false;
+      }
       const msg = e && e.message ? e.message : String(e);
       const corsHint =
         /Failed to fetch|NetworkError|CORS|cross-origin/i.test(msg) ||
@@ -200,6 +209,8 @@
           : "";
       setConnStatus("失败: " + msg + corsHint, "err");
       return false;
+    } finally {
+      clearTimeout(timer);
     }
   }
 
@@ -4390,15 +4401,12 @@
       opts = opts || {};
       syncUrlFields($("bootUrl") && $("bootUrl").value ? "bootUrl" : "baseUrl");
       const hasUrl = !!getBase();
-      if (hasUrl && !opts.skipConnect) {
-        setConnStatus("连接中…", "run");
-        try {
-          await connectComfy();
-        } catch (e) {
-          setConnStatus("失败: " + (e && e.message ? e.message : String(e)), "err");
-        }
-      }
       showPage("app");
+      if (hasUrl && !opts.skipConnect) {
+        connectComfy().catch(function (e) {
+          setConnStatus("失败: " + (e && e.message ? e.message : String(e)), "err");
+        });
+      }
     }
 
     if ($("btnEnterApp")) {
