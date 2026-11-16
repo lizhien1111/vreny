@@ -716,7 +716,7 @@
 
       <div class="boot-step" id="bootPanelAutodl">
         <h2>步骤 2 · AutoDL 启动接口</h2>
-        <p>自定义服务开公网：<strong>6008</strong> 填启动接口；Comfy 公网（6006）填在步骤 3。</p>
+        <p>自定义服务开公网：<strong>6008</strong> 填启动接口；Comfy 公网（6006）填在步骤 3。地址用 <strong>https、443</strong>，不要加 <code>:8443</code>。</p>
         <label for="autodlToken">AutoDL Token（只存本机）</label>
         <input
           id="autodlToken"
@@ -731,13 +731,19 @@
         <div class="row gap">
           <button type="button" class="btn btn-ghost" id="btnTestAutodlToken">检测 Token</button>
         </div>
+        <label for="autodlInstance">实例</label>
+        <select id="autodlInstance">
+          <option value="398">398机 · 北京B</option>
+          <option value="custom">自定义 UUID（420 等其它实例）</option>
+        </select>
         <label for="autodlUuid">实例 UUID</label>
         <input
           id="autodlUuid"
           type="text"
           autocomplete="off"
           spellcheck="false"
-          placeholder="如 8ce941bab2-2399dda4"
+          placeholder="自定义时粘贴 UUID"
+          value="cb08468270-a6e3e152"
         />
         <label for="startApiUrl">启动接口地址（6008，可选）</label>
         <input
@@ -748,7 +754,7 @@
           placeholder="https://u….seetacloud.com（6008 映射）"
         />
         <p class="hint" style="margin:6px 0 10px;font-size:0.82rem;opacity:0.85">
-          填 Token + UUID 后点「开机并拉起」：会先开机、自动填 6006/6008 公网，再拉起 Comfy。
+          默认 398机（UUID 只是实例号，Token 仍只存本机）。点「开机并拉起」会先开机，自动填 6006/6008 的 https 公网（443，不加端口），再对 6008 <code>POST /start</code> 拉起 Comfy 并轮询 6006。选「自定义」可改成 420 等其它实例。
         </p>
         <div class="boot-actions">
           <button type="button" class="btn btn-primary" id="btnStartComfy">开机并拉起 Comfy</button>
@@ -802,7 +808,7 @@
 
       <div class="boot-step">
         <h2>步骤 3 · Comfy 公网</h2>
-        <p id="bootUrlHint">AutoDL 填 6006 公网；RunPod 开机后会自动填入 proxy 地址，也可手改。</p>
+        <p id="bootUrlHint">AutoDL 填 6006 公网（https，不要加 :8443）；RunPod 开机后会自动填入 proxy 地址，也可手改。</p>
         <label for="bootUrl">Comfy 公网地址</label>
         <input
           id="bootUrl"
@@ -855,7 +861,8 @@
 
     <label for="modelSelect">模型</label>
     <select id="modelSelect" class="notranslate" translate="no">
-      <option value="lustify">Lustify Krea Turbo</option>
+      <option value="moody_v9">Moody Krea2 典藏版 V9 BF16</option>
+      <option value="lustify" selected>Lustify Krea Turbo</option>
       <option value="lustify_i2i">Lustify 图生图</option>
       <option value="lustify_inpaint">Lustify 局部重绘</option>
       <option value="moss">Moss Image bf16</option>
@@ -998,9 +1005,9 @@
   </div>
 
   <script src="png-meta.js?v=boot-20261026e"></script>
-  <script src="workflow.js?v=boot-20261107inpaint2"></script>
+  <script src="workflow.js?v=boot-20261116moody"></script>
   <script src="gallery.js?v=boot-20261026e"></script>
-  <script src="app.js?v=boot-20261107inpaint2"></script>
+  <script src="app.js?v=boot-20261116moody"></script>
 
   <script>
     function googleTranslateElementInit() {
