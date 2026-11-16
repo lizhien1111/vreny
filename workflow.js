@@ -1,6 +1,6 @@
 /**
  * Phone page API workflow builders.
- * Lustify Krea Turbo (+图生图/局部重绘) / Moss Image bf16 + Qwen bf16 TE + full VAE / WAI & Hassaku (Illustrious SDXL) / Qwen PHOTOGRAPHY.
+ * Lustify Krea Turbo (+图生图/局部重绘) / Moss Image bf16 + Qwen bf16 TE + full VAE / WAI & Hassaku (Illustrious SDXL) / Qwen PHOTOGRAPHY / Moody Krea2 典藏版 V9 BF16.
  */
 (function (root) {
   const LUSTIFY = {
@@ -93,7 +93,19 @@
     neg: "",
   };
 
-  const PRESETS = { lustify: LUSTIFY, lustify_i2i: LUSTIFY_I2I, lustify_inpaint: LUSTIFY_INPAINT, moss: MOSS, wai: WAI, hassaku: HASSAKU, krea2svr: KREA2SVR, photography: PHOTOGRAPHY };
+  // 398 data disk keeps this BF16 file in models/checkpoints (Comfy ckpt name, not a host path).
+  // Encoder + VAE are the official Krea 2 companions in text_encoders/ and vae/.
+  const MOODY_V9 = {
+    id: "moody_v9",
+    label: "Moody Krea2 典藏版 V9 BF16",
+    ckpt: "Moody-Krea2-Mix-CollectorEdition_00001__clean.safetensors",
+    clip: "qwen3vl_4b_bf16.safetensors",
+    vae: "qwen_image_vae.safetensors",
+    defaults: { steps: 8, cfg: 1.0, width: 1024, height: 1536, sampler: "euler_ancestral", scheduler: "beta" },
+    neg: "",
+  };
+
+  const PRESETS = { lustify: LUSTIFY, lustify_i2i: LUSTIFY_I2I, lustify_inpaint: LUSTIFY_INPAINT, moss: MOSS, wai: WAI, hassaku: HASSAKU, krea2svr: KREA2SVR, photography: PHOTOGRAPHY, moody_v9: MOODY_V9 };
 
   /** Krea2_SeedVR2_7B_FP8: Krea2 first pass (+realism LoRA) -> SeedVR2 7B FP8 upscale. Muted IPAdapter/CN/LayerStyle/compile nodes omitted. */
   function buildKrea2SeedVR2Workflow(opts) {
@@ -357,6 +369,75 @@
 
 
   /**
+   * Moody Krea 2 Mix Collector's Edition V9 BF16.
+   * Checkpoint lives in models/checkpoints, so CheckpointLoaderSimple (MODEL only).
+   * Official encoder via CLIPLoader type=krea2 and qwen_image_vae via VAELoader.
+   * Author defaults for the mix: Euler A / beta / 8 steps / CFG 1. Empty negative uses ConditioningZeroOut.
+   */
+  function buildMoodyV9Workflow(opts) {
+    const P = MOODY_V9;
+    const text = String(opts.prompt || "");
+    const neg = opts.negative != null ? String(opts.negative).trim() : "";
+    const steps = Number(opts.steps) || P.defaults.steps;
+    const width = Math.max(16, Math.round((Number(opts.width) || P.defaults.width) / 16) * 16);
+    const height = Math.max(16, Math.round((Number(opts.height) || P.defaults.height) / 16) * 16);
+    const seed = Number(opts.seed) || 0;
+    const cfg = opts.cfg != null ? Number(opts.cfg) : P.defaults.cfg;
+    const sampler = (opts.sampler != null && String(opts.sampler)) || P.defaults.sampler;
+    const scheduler = (opts.scheduler != null && String(opts.scheduler)) || P.defaults.scheduler;
+    const prefix = opts.prefix || "moody_v9_" + seed;
+    const ckpt = opts.ckpt || P.ckpt;
+    const g = {
+      "1": {
+        class_type: "CheckpointLoaderSimple",
+        inputs: { ckpt_name: ckpt },
+      },
+      "2": {
+        class_type: "CLIPLoader",
+        inputs: { clip_name: P.clip, type: "krea2", device: "default" },
+      },
+      "3": {
+        class_type: "VAELoader",
+        inputs: { vae_name: P.vae },
+      },
+      "5": {
+        class_type: "CLIPTextEncode",
+        inputs: { text: text, clip: ["2", 0] },
+      },
+      "7": {
+        class_type: "EmptyLatentImage",
+        inputs: { width: width, height: height, batch_size: 1 },
+      },
+      "8": {
+        class_type: "KSampler",
+        inputs: {
+          seed: seed,
+          steps: steps,
+          cfg: cfg,
+          sampler_name: sampler,
+          scheduler: scheduler,
+          denoise: 1.0,
+          model: ["1", 0],
+          positive: ["5", 0],
+          negative: ["6", 0],
+          latent_image: ["7", 0],
+        },
+      },
+      "9": {
+        class_type: "VAEDecode",
+        inputs: { samples: ["8", 0], vae: ["3", 0] },
+      },
+      "10": {
+        class_type: "SaveImage",
+        inputs: { filename_prefix: prefix, images: ["9", 0] },
+      },
+    };
+    if (neg) g["6"] = { class_type: "CLIPTextEncode", inputs: { text: neg, clip: ["2", 0] } };
+    else g["6"] = { class_type: "ConditioningZeroOut", inputs: { conditioning: ["5", 0] } };
+    return g;
+  }
+
+  /**
    * Qwen-Image PHOTOGRAPHY_STYLE NSFW (author defaults: res_2s / bong_tangent / 10 / CFG1 / ~896x1536).
    * No Lightning / NSFW LoRAs. Prompt via TextEncodeQwenImageEditPlus; neg = ConditioningZeroOut.
    */
@@ -518,7 +599,7 @@
 
   /**
    * @param {object} opts
-   * @param {string} [opts.model] lustify|lustify_i2i|lustify_inpaint|moss|wai|hassaku|krea2svr|photography
+   * @param {string} [opts.model] lustify|lustify_i2i|lustify_inpaint|moss|wai|hassaku|krea2svr|photography|moody_v9
    */
   function buildWorkflow(opts) {
     const model = String((opts && opts.model) || "lustify").toLowerCase();
@@ -526,6 +607,7 @@
     if (model === "lustify_inpaint") return buildLustifyInpaintWorkflow(opts || {});
     if (model === "krea2svr") return buildKrea2SeedVR2Workflow(opts || {});
     if (model === "photography") return buildPhotographyWorkflow(opts || {});
+    if (model === "moody_v9") return buildMoodyV9Workflow(opts || {});
     if (model === "moss") return buildMossWorkflow(opts || {});
     if (model === "wai") return buildSdxlCheckpointWorkflow(opts || {}, WAI);
     if (model === "hassaku") return buildSdxlCheckpointWorkflow(opts || {}, HASSAKU);
@@ -542,8 +624,10 @@
     HASSAKU,
     KREA2SVR,
     PHOTOGRAPHY,
+    MOODY_V9,
     buildKrea2SeedVR2Workflow,
     buildPhotographyWorkflow,
+    buildMoodyV9Workflow,
     buildLustifyImg2ImgWorkflow,
     buildLustifyInpaintWorkflow,
     DEFAULT_NEG: LUSTIFY.neg,

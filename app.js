@@ -51,11 +51,37 @@
   let i2iPreviewUrl = null;
 
 
+  /**
+   * AutoDL custom-service URLs are https on 443. Drop :8443 (and any port on seetacloud.com).
+   * Other hosts, including RunPod, keep their scheme and port.
+   */
+  function normalizePublicUrl(raw) {
+    let d = String(raw || "").trim();
+    if (!d) return "";
+    const withScheme = /^https?:\/\//i.test(d) ? d : "https://" + d;
+    let u;
+    try {
+      u = new URL(withScheme);
+    } catch (e) {
+      return d.replace(/\/+$/, "");
+    }
+    const host = (u.hostname || "").toLowerCase();
+    const seeta = host === "seetacloud.com" || host.endsWith(".seetacloud.com");
+    if (seeta || String(u.port) === "8443") {
+      u.protocol = "https:";
+      u.port = "";
+    }
+    let path = u.pathname || "";
+    if (path === "/") path = "";
+    else path = path.replace(/\/+$/, "");
+    return u.origin + path + (u.search || "");
+  }
+
   function getBase() {
     const fromBase = ($("baseUrl") && $("baseUrl").value) || "";
     const fromBoot = ($("bootUrl") && $("bootUrl").value) || "";
-    const raw = (fromBase || fromBoot || "").trim().replace(/\/+$/, "");
-    return raw;
+    const raw = (fromBase || fromBoot || "").trim();
+    return normalizePublicUrl(raw);
   }
 
   function syncUrlFields(fromId) {
@@ -2445,11 +2471,53 @@
     else localStorage.removeItem(LS_AUTODL_UUID);
   }
 
+  // Public instance ids only. The AutoDL web Token stays in the phone's localStorage.
+  const AUTODL_INSTANCE_PRESETS = [
+    { id: "398", label: "398机 · 北京B", uuid: "cb08468270-a6e3e152" },
+  ];
+
+  function autodlPresetByUuid(uuid) {
+    const want = normalizeAutodlUuid(uuid);
+    if (!want) return null;
+    for (let i = 0; i < AUTODL_INSTANCE_PRESETS.length; i++) {
+      if (normalizeAutodlUuid(AUTODL_INSTANCE_PRESETS[i].uuid) === want) {
+        return AUTODL_INSTANCE_PRESETS[i];
+      }
+    }
+    return null;
+  }
+
+  function syncInstancePresetFromUuid() {
+    const sel = $("autodlInstance");
+    const uuidEl = $("autodlUuid");
+    if (!sel || !uuidEl) return;
+    const hit = autodlPresetByUuid(uuidEl.value);
+    sel.value = hit ? hit.id : "custom";
+  }
+
+  function applyInstancePreset(id) {
+    if (!id || id === "custom") return;
+    const uuidEl = $("autodlUuid");
+    if (!uuidEl) return;
+    for (let i = 0; i < AUTODL_INSTANCE_PRESETS.length; i++) {
+      if (AUTODL_INSTANCE_PRESETS[i].id === id) {
+        uuidEl.value = AUTODL_INSTANCE_PRESETS[i].uuid;
+        return;
+      }
+    }
+  }
+
   function loadAutodlCreds() {
     if ($("autodlToken"))
       $("autodlToken").value = localStorage.getItem(LS_AUTODL_TOKEN) || "";
-    if ($("autodlUuid"))
-      $("autodlUuid").value = localStorage.getItem(LS_AUTODL_UUID) || "";
+    const savedUuid = (localStorage.getItem(LS_AUTODL_UUID) || "").trim();
+    if ($("autodlUuid")) {
+      if (savedUuid) $("autodlUuid").value = savedUuid;
+      else if (!($("autodlUuid").value || "").trim() && AUTODL_INSTANCE_PRESETS[0]) {
+        $("autodlUuid").value = AUTODL_INSTANCE_PRESETS[0].uuid;
+      }
+    }
+    syncInstancePresetFromUuid();
   }
 
   /** AutoDL official power_off via CORS proxy (works even if Comfy is down). */
@@ -2567,12 +2635,7 @@
   }
 
   function domainToHttps(dom) {
-    if (!dom) return "";
-    let d = String(dom).trim();
-    if (!d) return "";
-    d = d.split(":")[0];
-    if (/^https?:\/\//i.test(d)) return d.replace(/\/+$/, "");
-    return "https://" + d;
+    return normalizePublicUrl(dom);
   }
 
   function applyAutodlServiceUrls(it) {
@@ -3350,9 +3413,11 @@
   function initModelSelect() {
     const sel = $("modelSelect");
     if (!sel) return;
-    const saved = localStorage.getItem(LS_MODEL) || "lustify";
-    if ([].some.call(sel.options, function (o) { return o.value === saved; })) {
-      sel.value = saved;
+    const saved = localStorage.getItem(LS_MODEL) || "";
+    const on398 = autodlPresetByUuid((($("autodlUuid") && $("autodlUuid").value) || ""));
+    const want = saved || (on398 ? "moody_v9" : "lustify");
+    if ([].some.call(sel.options, function (o) { return o.value === want; })) {
+      sel.value = want;
     }
     applyModelPreset(sel.value, { fillEmptyNeg: !($("negative") && ($("negative").value || "").trim()) });
     syncI2iPanel(sel.value);
@@ -3654,7 +3719,7 @@
       hint.textContent =
         p === "runpod"
           ? "RunPod 开机后会自动填入 proxy 地址，也可手改；再点检测连接。"
-          : "AutoDL 填 6006 公网；有启动接口时先点「拉起 Comfy」。";
+          : "AutoDL 填 6006 公网（https，不要加 :8443）；有启动接口时先点「拉起 Comfy」。";
     }
     const ph = $("bootUrl");
     if (ph) {
@@ -3962,10 +4027,9 @@
   }
 
   function getStartApiBase() {
-
     const el = $("startApiUrl");
-    const raw = ((el && el.value) || "").trim().replace(/\/+$/, "");
-    return raw;
+    const raw = ((el && el.value) || "").trim();
+    return normalizePublicUrl(raw);
   }
 
   function requireStartApiBase() {
@@ -4155,21 +4219,25 @@
 
 
   function initDefaults() {
-    const W = window.ComfyPhoneWorkflow;
-    if (W && !$("negative").value) $("negative").value = W.DEFAULT_NEG;
     $("steps").value = $("steps").value || 30;
     if ($("batch")) $("batch").value = $("batch").value || 1;
     $("width").value = $("width").value || 1280;
     $("height").value = $("height").value || 2560;
 
+    loadAutodlCreds();
+
     const saved = localStorage.getItem("comfy_phone_base");
     if (saved) {
-      if ($("baseUrl") && !$("baseUrl").value) $("baseUrl").value = saved;
-      if ($("bootUrl") && !$("bootUrl").value) $("bootUrl").value = saved;
+      const norm = normalizePublicUrl(saved);
+      if ($("baseUrl") && !$("baseUrl").value) $("baseUrl").value = norm;
+      if ($("bootUrl") && !$("bootUrl").value) $("bootUrl").value = norm;
+      if (norm && norm !== saved) localStorage.setItem("comfy_phone_base", norm);
     }
     const savedApi = localStorage.getItem("comfy_phone_start_api");
     if (savedApi && $("startApiUrl") && !$("startApiUrl").value) {
-      $("startApiUrl").value = savedApi;
+      const normApi = normalizePublicUrl(savedApi);
+      $("startApiUrl").value = normApi;
+      if (normApi && normApi !== savedApi) localStorage.setItem("comfy_phone_start_api", normApi);
     }
 
     loadRunpodFields();
@@ -4219,6 +4287,11 @@
     }
 
     function persistBaseFrom(id) {
+      const el = $(id);
+      if (el) {
+        const n = normalizePublicUrl(el.value);
+        if (n) el.value = n;
+      }
       syncUrlFields(id);
       const v = getBase();
       if (v) localStorage.setItem("comfy_phone_base", v);
@@ -4274,10 +4347,21 @@
       el.addEventListener("change", persistAutodlCreds);
       el.addEventListener("blur", persistAutodlCreds);
     });
+    if ($("autodlUuid")) {
+      $("autodlUuid").addEventListener("input", syncInstancePresetFromUuid);
+    }
+    if ($("autodlInstance")) {
+      $("autodlInstance").addEventListener("change", function () {
+        applyInstancePreset($("autodlInstance").value);
+        persistAutodlCreds();
+      });
+    }
 
     if ($("startApiUrl")) {
       const persistApi = () => {
+        const el = $("startApiUrl");
         const v = getStartApiBase();
+        if (el && v) el.value = v;
         if (v) localStorage.setItem("comfy_phone_start_api", v);
       };
       $("startApiUrl").addEventListener("change", persistApi);
