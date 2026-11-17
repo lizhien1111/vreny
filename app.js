@@ -52,7 +52,8 @@
 
 
   /**
-   * AutoDL custom-service URLs are https on 443. Drop :8443 (and any port on seetacloud.com).
+   * Default scheme is https. Seetacloud hosts are pinned to https.
+   * Keep the port the user entered (including :8443). Trim trailing slashes.
    * Other hosts, including RunPod, keep their scheme and port.
    */
   function normalizePublicUrl(raw) {
@@ -66,15 +67,277 @@
       return d.replace(/\/+$/, "");
     }
     const host = (u.hostname || "").toLowerCase();
-    const seeta = host === "seetacloud.com" || host.endsWith(".seetacloud.com");
-    if (seeta || String(u.port) === "8443") {
-      u.protocol = "https:";
-      u.port = "";
-    }
+    if (isSeetacloudHost(host)) u.protocol = "https:";
+    return formatPublicUrl(u);
+  }
+
+  function isSeetacloudHost(hostname) {
+    const host = String(hostname || "").toLowerCase();
+    return host === "seetacloud.com" || host.endsWith(".seetacloud.com");
+  }
+
+  function formatPublicUrl(u) {
     let path = u.pathname || "";
     if (path === "/") path = "";
     else path = path.replace(/\/+$/, "");
     return u.origin + path + (u.search || "");
+  }
+
+  /** 443 (empty port) and 8443 for a seetacloud URL. Null for any other host or port. */
+  function seetaPortPair(raw) {
+    let u;
+    try {
+      u = new URL(raw);
+    } catch (e) {
+      return null;
+    }
+    if (!isSeetacloudHost(u.hostname)) return null;
+    if (u.port && u.port !== "443" && u.port !== "8443") return null;
+    const on8443 = u.port === "8443";
+    const chosen = new URL(u.href);
+    const other = new URL(u.href);
+    if (on8443) other.port = "";
+    else {
+      chosen.port = "";
+      other.port = "8443";
+    }
+    return {
+      chosen: formatPublicUrl(chosen),
+      other: formatPublicUrl(other),
+      implicit443: !on8443,
+    };
+  }
+
+  function isRetryableConnectError(e) {
+    if (!e) return false;
+    const name = e.name || "";
+    const msg = (e && e.message) || String(e);
+    if (name === "AbortError" || name === "TimeoutError" || /aborted/i.test(msg)) return true;
+    return /Failed to fetch|NetworkError|Load failed|network error/i.test(msg);
+  }
+
+  function deviceNameFromStats(data) {
+    return (
+      data &&
+      data.devices &&
+      data.devices[0] &&
+      (data.devices[0].name || data.devices[0].type)
+    );
+  }
+
+  async function fetchSystemStatsOnce(url, timeoutMs, outerSignal) {
+    const ctrl = new AbortController();
+    const timer = setTimeout(function () {
+      ctrl.abort();
+    }, timeoutMs);
+    function onOuter() {
+      ctrl.abort();
+    }
+    if (outerSignal) {
+      if (outerSignal.aborted) ctrl.abort();
+      else outerSignal.addEventListener("abort", onOuter);
+    }
+    try {
+      const res = await fetch(url + "/system_stats", {
+        method: "GET",
+        mode: "cors",
+        signal: ctrl.signal,
+      });
+      if (!res.ok) {
+        const err = new Error("HTTP " + res.status);
+        err.httpStatus = res.status;
+        throw err;
+      }
+      const data = await res.json().catch(function () {
+        return {};
+      });
+      return data;
+    } finally {
+      clearTimeout(timer);
+      if (outerSignal) outerSignal.removeEventListener("abort", onOuter);
+    }
+  }
+
+  /**
+   * GET /system_stats.
+   * Seetacloud with no port (or :443): race 443 and :8443, first success wins,
+   * and the loser is aborted — a dead 443 does not add an 8s wait, and a fast
+   * 443 is kept.
+   * Explicit :8443: try that port first; on timeout / network error try 443.
+   * Any other host or port: a single request, port unchanged.
+   */
+  function probeSystemStats(base) {
+    const pair = seetaPortPair(base);
+    if (!pair) {
+      return fetchSystemStatsOnce(base, 8000, null).then(function (data) {
+        return { url: base, data: data };
+      });
+    }
+    if (!pair.implicit443) {
+      return fetchSystemStatsOnce(pair.chosen, 8000, null).then(
+        function (data) {
+          return { url: pair.chosen, data: data };
+        },
+        function (e) {
+          if (!isRetryableConnectError(e)) throw e;
+          return fetchSystemStatsOnce(pair.other, 8000, null).then(function (data) {
+            return { url: pair.other, data: data };
+          });
+        }
+      );
+    }
+    return raceSystemStats(pair.chosen, pair.other, 8000);
+  }
+
+  function raceSystemStats(primary, alternate, timeoutMs) {
+    return new Promise(function (resolve, reject) {
+      let settled = false;
+      const ctrls = [new AbortController(), new AbortController()];
+      let pending = 2;
+      let primaryErr = null;
+      let altErr = null;
+
+      function abortAll() {
+        ctrls.forEach(function (c) {
+          try {
+            c.abort();
+          } catch (e) {}
+        });
+      }
+      function finishOk(url, data) {
+        if (settled) return;
+        settled = true;
+        abortAll();
+        resolve({ url: url, data: data });
+      }
+      function finishErr(err) {
+        if (settled) return;
+        settled = true;
+        abortAll();
+        reject(err);
+      }
+      function onFail(index, err) {
+        if (settled) return;
+        if (index === 0) primaryErr = err;
+        else altErr = err;
+        // Chosen URL answered HTTP. It is reachable; do not switch ports.
+        if (index === 0 && err && err.httpStatus) {
+          finishErr(err);
+          return;
+        }
+        pending -= 1;
+        if (pending > 0) return;
+        const httpErr =
+          (primaryErr && primaryErr.httpStatus && primaryErr) ||
+          (altErr && altErr.httpStatus && altErr) ||
+          null;
+        finishErr(httpErr || primaryErr || altErr || err);
+      }
+
+      fetchSystemStatsOnce(primary, timeoutMs, ctrls[0].signal).then(
+        function (data) {
+          finishOk(primary, data);
+        },
+        function (err) {
+          onFail(0, err);
+        }
+      );
+      fetchSystemStatsOnce(alternate, timeoutMs, ctrls[1].signal).then(
+        function (data) {
+          finishOk(alternate, data);
+        },
+        function (err) {
+          onFail(1, err);
+        }
+      );
+    });
+  }
+
+  function persistComfyFields(url) {
+    if ($("bootUrl")) $("bootUrl").value = url;
+    if ($("baseUrl")) $("baseUrl").value = url;
+    try {
+      localStorage.setItem("comfy_phone_base", url);
+    } catch (e) {}
+  }
+
+  function rememberStartApi(url) {
+    if ($("startApiUrl")) $("startApiUrl").value = url;
+    try {
+      localStorage.setItem("comfy_phone_start_api", url);
+    } catch (e) {}
+  }
+
+  /**
+   * When Comfy is reached on :8443, point a seetacloud 6008 URL at that port too.
+   * When :8443 failed and 443 worked, drop :8443 from the 6008 URL.
+   * Non-seetacloud start APIs, and any other port, are left alone.
+   */
+  function syncStartApiPort(comfyUrl, fellBack) {
+    const el = $("startApiUrl");
+    if (!el) return;
+    const cur = (el.value || "").trim();
+    if (!cur) return;
+    let cu;
+    try {
+      cu = new URL(comfyUrl);
+    } catch (e) {
+      return;
+    }
+    if (!isSeetacloudHost(cu.hostname)) return;
+    let su;
+    try {
+      su = new URL(normalizePublicUrl(cur));
+    } catch (e) {
+      return;
+    }
+    if (!isSeetacloudHost(su.hostname)) return;
+    if (su.port && su.port !== "443" && su.port !== "8443") return;
+    const want8443 = cu.port === "8443";
+    if (want8443) {
+      if (su.port === "8443") return;
+      su.port = "8443";
+    } else if (fellBack && su.port === "8443") {
+      su.port = "";
+    } else {
+      return;
+    }
+    const next = formatPublicUrl(su);
+    if (next === normalizePublicUrl(cur)) return;
+    rememberStartApi(next);
+  }
+
+  /**
+   * POST a start-api path. Seetacloud 443/:8443 falls back to the other port
+   * after a timeout or network error. Other hosts are requested once.
+   * Resolves { res, url } for the URL that answered.
+   */
+  async function fetchStartApiPath(apiBase, path, timeoutMs) {
+    const ms = timeoutMs || 20000;
+    async function once(url) {
+      const ctrl = new AbortController();
+      const tm = setTimeout(function () {
+        ctrl.abort();
+      }, ms);
+      try {
+        return await fetch(url + path, {
+          method: "POST",
+          mode: "cors",
+          headers: { "Content-Type": "application/json" },
+          body: "{}",
+          signal: ctrl.signal,
+        });
+      } finally {
+        clearTimeout(tm);
+      }
+    }
+    try {
+      return { res: await once(apiBase), url: apiBase };
+    } catch (e) {
+      const pair = seetaPortPair(apiBase);
+      if (!pair || !isRetryableConnectError(e)) throw e;
+      return { res: await once(pair.other), url: pair.other };
+    }
   }
 
   function getBase() {
@@ -161,43 +424,45 @@
     }
   }
 
-  async function connectComfy() {
+  async function connectComfy(opts) {
+    const quiet = !!(opts && opts.quiet);
     let base;
     try {
       base = requireBase();
     } catch (e) {
       connectedOk = false;
-      setConnStatus("失败: " + e.message, "err");
+      if (!quiet) setConnStatus("失败: " + e.message, "err");
       return false;
     }
-    localStorage.setItem("comfy_phone_base", base);
-    setConnStatus("连接中…", "run");
-    const ctrl = new AbortController();
-    const timer = setTimeout(function () {
-      ctrl.abort();
-    }, 8000);
     try {
-      const res = await fetch(base + "/system_stats", {
-        method: "GET",
-        mode: "cors",
-        signal: ctrl.signal,
-      });
-      if (!res.ok) throw new Error("HTTP " + res.status);
-      const data = await res.json().catch(() => ({}));
-      const name =
-        data &&
-        data.devices &&
-        data.devices[0] &&
-        (data.devices[0].name || data.devices[0].type);
+      localStorage.setItem("comfy_phone_base", base);
+    } catch (e) {}
+    if (!quiet) setConnStatus("连接中…", "run");
+    try {
+      const hit = await probeSystemStats(base);
+      const win = (hit && hit.url) || base;
+      let fellBack = false;
+      try {
+        fellBack = (new URL(win).port || "") !== (new URL(base).port || "");
+      } catch (e2) {}
+      if (fellBack) persistComfyFields(win);
+      else {
+        try {
+          localStorage.setItem("comfy_phone_base", win);
+        } catch (e3) {}
+      }
+      syncStartApiPort(win, fellBack);
+      const name = deviceNameFromStats(hit && hit.data);
       connectedOk = true;
       setConnStatus(
-        "已连接" + (name ? " · " + name : "") + " · " + base.replace(/^https?:\/\//, ""),
+        "已连接" + (name ? " · " + name : "") + " · " + win.replace(/^https?:\/\//, ""),
         "ok"
       );
       return true;
     } catch (e) {
       connectedOk = false;
-      if (e && (e.name === "AbortError" || /aborted/i.test((e && e.message) || ""))) {
+      if (quiet) return false;
+      if (e && (e.name === "AbortError" || e.name === "TimeoutError" || /aborted/i.test((e && e.message) || ""))) {
         setConnStatus("失败: 连接超时，Comfy 未响应", "err");
         return false;
       }
@@ -209,8 +474,6 @@
           : "";
       setConnStatus("失败: " + msg + corsHint, "err");
       return false;
-    } finally {
-      clearTimeout(timer);
     }
   }
 
@@ -2788,18 +3051,9 @@
     const apiBase = getStartApiBase();
     if (!apiBase) return { ok: false, skip: true };
     try {
-      const ctrl = new AbortController();
-      const t = setTimeout(function () {
-        ctrl.abort();
-      }, 15000);
-      const res = await fetch(apiBase + "/poweroff", {
-        method: "POST",
-        mode: "cors",
-        headers: { "Content-Type": "application/json" },
-        body: "{}",
-        signal: ctrl.signal,
-      });
-      clearTimeout(t);
+      const got = await fetchStartApiPath(apiBase, "/poweroff", 15000);
+      if (got.url && got.url !== apiBase) rememberStartApi(got.url);
+      const res = got.res;
       const j = await res.json().catch(function () {
         return {};
       });
@@ -3730,7 +3984,7 @@
       hint.textContent =
         p === "runpod"
           ? "RunPod 开机后会自动填入 proxy 地址，也可手改；再点检测连接。"
-          : "AutoDL 填 6006 公网（https，不要加 :8443）；有启动接口时先点「拉起 Comfy」。";
+          : "AutoDL 填 6006 公网（https，可以带 :8443）。本页会自动试 443 和 8443；有启动接口时先点「拉起 Comfy」。";
     }
     const ph = $("bootUrl");
     if (ph) {
@@ -4116,18 +4370,12 @@
           "run"
         );
         try {
-          const ctrl = new AbortController();
-          const tm = setTimeout(function () {
-            ctrl.abort();
-          }, 20000);
-          const res = await fetch(apiBase + "/start", {
-            method: "POST",
-            mode: "cors",
-            headers: { "Content-Type": "application/json" },
-            body: "{}",
-            signal: ctrl.signal,
-          });
-          clearTimeout(tm);
+          const got = await fetchStartApiPath(apiBase, "/start", 20000);
+          if (got.url && got.url !== apiBase) {
+            apiBase = got.url;
+            rememberStartApi(got.url);
+          }
+          const res = got.res;
           startJson = await res.json().catch(function () {
             return {};
           });
@@ -4190,32 +4438,26 @@
       attempt += 1;
       setConnStatus("等待 Comfy 就绪… (" + attempt + ")", "run");
       try {
-        const res = await fetch(comfyBase + "/system_stats", {
-          method: "GET",
-          mode: "cors",
-        });
-        if (res.ok) {
-          const ok = await connectComfy();
-          if (ok) return true;
-        }
+        const ok = await connectComfy({ quiet: true });
+        if (ok) return true;
       } catch (e) {
         /* keep polling */
       }
       // occasionally re-hit /start if still failing
       if (apiBase && attempt % 5 === 0) {
-        fetch(apiBase + "/start", {
-          method: "POST",
-          mode: "cors",
-          headers: { "Content-Type": "application/json" },
-          body: "{}",
-        }).catch(function () {});
+        fetchStartApiPath(apiBase, "/start", 20000)
+          .then(function (got) {
+            if (got && got.url && got.url !== apiBase) {
+              rememberStartApi(got.url);
+              apiBase = got.url;
+            }
+          })
+          .catch(function () {});
       }
       if (hasCreds && attempt % 6 === 0) {
         try {
           const it = await autodlFetchInstance();
           applyAutodlServiceUrls(it);
-          const nb = getBase();
-          if (nb) comfyBase = nb;
           apiBase = getStartApiBase() || apiBase;
         } catch (e3) {}
       }
