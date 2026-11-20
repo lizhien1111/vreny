@@ -1,6 +1,6 @@
 /**
  * Phone page API workflow builders.
- * Lustify Krea Turbo (+图生图/局部重绘) / Moss Image bf16 + Qwen bf16 TE + full VAE / WAI & Hassaku (Illustrious SDXL) / Qwen PHOTOGRAPHY / Moody Krea2 典藏版 V9 BF16.
+ * Lustify Krea Turbo (+图生图/局部重绘) / Moss Image bf16 + Qwen bf16 TE + full VAE / WAI & Hassaku (Illustrious SDXL) / Qwen PHOTOGRAPHY / Moody Krea2 典藏版 V9 BF16 / Moody Krea2 Simple V5.
  */
 (function (root) {
   const LUSTIFY = {
@@ -105,7 +105,26 @@
     neg: "",
   };
 
-  const PRESETS = { lustify: LUSTIFY, lustify_i2i: LUSTIFY_I2I, lustify_inpaint: LUSTIFY_INPAINT, moss: MOSS, wai: WAI, hassaku: HASSAKU, krea2svr: KREA2SVR, photography: PHOTOGRAPHY, moody_v9: MOODY_V9 };
+  // Source graph: workflows/Moody_Krea2_Simple_V5.json (litegraph, already patched).
+  // ResolutionSelector "2:3 (Portrait Photo)" / 1MP / multiple 8 → 840×1256.
+  // Checkpoint is on models/checkpoints. CLIP type krea2. VAE unchanged.
+  // SeedVR2 weights + 4xNomosWebPhoto_RealPLKSR.pth are on the Beijing shared disk.
+  const MOODY_V5 = {
+    id: "moody_v5",
+    label: "Moody Krea2 Simple V5",
+    ckpt: "Moody-Krea2-Mix-CollectorEdition_00001__clean.safetensors",
+    clip: "qwen3vl_4b_bf16.safetensors",
+    vae: "qwen_image_vae.safetensors",
+    upscaler: "4xNomosWebPhoto_RealPLKSR.pth",
+    dit: "seedvr2_ema_7b_sharp_fp16.safetensors",
+    svrVae: "ema_vae_fp16.safetensors",
+    autoDetailPrompt: "Person， yanni, cute girl",
+    manualDetailPrompt: "close-up, labia spread open by both hands, clitoris visible, urethral opening visible, vaginal opening visible, frontal view",
+    defaults: { steps: 8, cfg: 1.0, width: 840, height: 1256, sampler: "er_sde", scheduler: "beta" },
+    neg: "",
+  };
+
+  const PRESETS = { lustify: LUSTIFY, lustify_i2i: LUSTIFY_I2I, lustify_inpaint: LUSTIFY_INPAINT, moss: MOSS, wai: WAI, hassaku: HASSAKU, krea2svr: KREA2SVR, photography: PHOTOGRAPHY, moody_v9: MOODY_V9, moody_v5: MOODY_V5 };
 
   /** Krea2_SeedVR2_7B_FP8: Krea2 first pass (+realism LoRA) -> SeedVR2 7B FP8 upscale. Muted IPAdapter/CN/LayerStyle/compile nodes omitted. */
   function buildKrea2SeedVR2Workflow(opts) {
@@ -437,6 +456,424 @@
     return g;
   }
 
+  /** Frontend SaveImage date tokens, expanded the way the V5 graph queues them. */
+  function expandComfyDatePrefix(prefix, date) {
+    const d = date || new Date();
+    const pad = (n) => String(n).padStart(2, "0");
+    const tokens = {
+      yyyy: String(d.getFullYear()),
+      MM: pad(d.getMonth() + 1),
+      dd: pad(d.getDate()),
+      hh: pad(d.getHours()),
+      mm: pad(d.getMinutes()),
+      ss: pad(d.getSeconds()),
+    };
+    return String(prefix).replace(/%date:([^%]+)%/g, function (_, fmt) {
+      return fmt.replace(/yyyy|MM|dd|hh|mm|ss/g, function (t) { return tokens[t] || t; });
+    });
+  }
+
+  /**
+   * Moody Krea2 Simple Workflow V5 as a Comfy API prompt.
+   * Node ids match workflows/Moody_Krea2_Simple_V5.json.
+   * Bypassed nodes (mode 4) are left out, the same way Comfy queues that graph:
+   * LatentUpscaleBy, both DetailerForEach, skin ImageUpscaleWithModel, and the SeedVR2 group.
+   * opts.seedvr / opts.autoDetail / opts.manualDetail put those optional branches back.
+   * Virtual nodes (Set/Get, Reroute, Seed rgthree, notes, comparers, bypassers) are resolved away.
+   * Second KSampler denoise stays 0, as stored on node 842.
+   */
+  function buildMoodyV5Workflow(opts) {
+    const P = MOODY_V5;
+    opts = opts || {};
+    const text = String(opts.prompt || "");
+    const neg = opts.negative != null ? String(opts.negative).trim() : "";
+    const steps = Number(opts.steps) || P.defaults.steps;
+    const cfg = opts.cfg != null && opts.cfg !== "" ? Number(opts.cfg) : P.defaults.cfg;
+    const seed = Number.isFinite(Number(opts.seed)) ? Math.round(Number(opts.seed)) : 0;
+    const width = Math.max(64, Math.round((Number(opts.width) || P.defaults.width) / 8) * 8);
+    const height = Math.max(64, Math.round((Number(opts.height) || P.defaults.height) / 8) * 8);
+    const useSelector = width === P.defaults.width && height === P.defaults.height;
+    const seedvr = opts.seedvr === true;
+    const autoDetail = opts.autoDetail === true;
+    const manualDetail = opts.manualDetail === true;
+    const maskName = String(opts.maskName || "").trim();
+    if (manualDetail && !maskName) throw new Error("手动重绘需要蒙版图（白=重画）");
+    const autoPrompt = String(opts.autoDetailPrompt || "").trim() || P.autoDetailPrompt;
+    const manualPrompt = String(opts.manualDetailPrompt || "").trim() || P.manualDetailPrompt;
+    const stamped = opts.now instanceof Date ? opts.now : new Date();
+    const savePrefix = expandComfyDatePrefix("image/%date:yyyy-MM-dd%/Krea2-%date:hhmmss%", stamped);
+    const seedvrPrefix = expandComfyDatePrefix("image/%date:yyyy-MM-dd%/Krea2-SEEDVR-%date:hhmmss%", stamped);
+
+    const g = {
+      "865": { class_type: "CheckpointLoaderSimple", inputs: { ckpt_name: opts.ckpt || P.ckpt } },
+      "866": {
+        class_type: "CLIPLoader",
+        inputs: { clip_name: P.clip, type: "krea2", device: "default" },
+      },
+      "869": { class_type: "VAELoader", inputs: { vae_name: P.vae } },
+      "867": {
+        class_type: "ModelAttentionBackend",
+        inputs: { model: ["865", 0], attention: "comfy kitchen attention" },
+      },
+      "873": {
+        class_type: "Power Lora Loader (rgthree)",
+        inputs: {
+          model: ["867", 0],
+          PowerLoraLoaderHeaderWidget: { type: "PowerLoraLoaderHeaderWidget" },
+        },
+      },
+      "627": { class_type: "CLIPTextEncode", inputs: { text: text, clip: ["866", 0] } },
+      "773": { class_type: "PrimitiveInt", inputs: { value: 40 } },
+      "775": { class_type: "PrimitiveInt", inputs: { value: 0 } },
+      "771": { class_type: "SimpleMath+", inputs: { a: seed, b: ["773", 0], value: "a+b" } },
+      "774": { class_type: "SimpleMath+", inputs: { a: ["775", 0], b: ["771", 0], value: "a+b" } },
+      "599": {
+        class_type: "KSamplerAdvanced",
+        inputs: {
+          model: ["873", 0],
+          add_noise: "enable",
+          noise_seed: seed,
+          steps: steps,
+          cfg: cfg,
+          sampler_name: "er_sde",
+          scheduler: "beta",
+          positive: ["627", 0],
+          negative: ["763", 0],
+          latent_image: ["698", 0],
+          start_at_step: 0,
+          end_at_step: steps,
+          return_with_leftover_noise: "disable",
+        },
+      },
+      "842": {
+        class_type: "KSampler",
+        inputs: {
+          model: ["873", 0],
+          seed: ["771", 0],
+          steps: 4,
+          cfg: 1,
+          sampler_name: "euler_ancestral",
+          scheduler: "beta",
+          positive: ["627", 0],
+          negative: ["763", 0],
+          latent_image: ["599", 0],
+          denoise: 0,
+        },
+      },
+      "609": { class_type: "VAEDecode", inputs: { samples: ["599", 0], vae: ["869", 0] } },
+      "610": { class_type: "VAEDecode", inputs: { samples: ["842", 0], vae: ["869", 0] } },
+      "832": {
+        class_type: "ColorMatch",
+        inputs: {
+          image_ref: ["609", 0],
+          image_target: ["610", 0],
+          method: "hm-mkl-hm",
+          strength: 0.22,
+          multithread: true,
+        },
+      },
+      "644": { class_type: "UpscaleModelLoader", inputs: { model_name: P.upscaler } },
+      "637": { class_type: "FloatConstant", inputs: { value: 2.5 } },
+      "618": { class_type: "GetImageSize", inputs: { image: ["832", 0] } },
+      "630": {
+        class_type: "SimpleMath+",
+        inputs: { a: ["618", 1], b: ["637", 0], value: "(a*b + (96 * 2))/2" },
+      },
+      "631": {
+        class_type: "SimpleMath+",
+        inputs: { a: ["618", 0], b: ["637", 0], value: "(a*b + (96 * 2))/2" },
+      },
+      "663": {
+        class_type: "UltimateSDUpscale",
+        inputs: {
+          image: ["832", 0],
+          model: ["873", 0],
+          positive: ["627", 0],
+          negative: ["763", 0],
+          vae: ["869", 0],
+          upscale_model: ["644", 0],
+          upscale_by: ["637", 0],
+          seed: ["774", 0],
+          steps: 4,
+          cfg: 1,
+          sampler_name: "euler_ancestral",
+          scheduler: "beta",
+          denoise: 0.2,
+          mode_type: "Linear",
+          tile_width: ["631", 0],
+          tile_height: ["630", 0],
+          mask_blur: 64,
+          tile_padding: 96,
+          seam_fix_mode: "None",
+          seam_fix_denoise: 1,
+          seam_fix_width: 64,
+          seam_fix_mask_blur: 8,
+          seam_fix_padding: 16,
+          force_uniform_tiles: true,
+          tiled_decode: false,
+        },
+      },
+    };
+
+    if (useSelector) {
+      g["850"] = {
+        class_type: "ResolutionSelector",
+        inputs: { aspect_ratio: "2:3 (Portrait Photo)", megapixels: 1, multiple: 8 },
+      };
+      g["698"] = {
+        class_type: "EmptyLatentImage",
+        inputs: { width: ["850", 0], height: ["850", 1], batch_size: 1 },
+      };
+    } else {
+      g["698"] = {
+        class_type: "EmptyLatentImage",
+        inputs: { width: width, height: height, batch_size: 1 },
+      };
+    }
+
+    if (neg) g["763"] = { class_type: "CLIPTextEncode", inputs: { text: neg, clip: ["866", 0] } };
+    else g["763"] = { class_type: "ConditioningZeroOut", inputs: { conditioning: ["627", 0] } };
+
+    let imageRef = ["663", 0];
+
+    if (autoDetail) {
+      g["884"] = {
+        class_type: "Power Lora Loader (rgthree)",
+        inputs: {
+          model: ["867", 0],
+          PowerLoraLoaderHeaderWidget: { type: "PowerLoraLoaderHeaderWidget" },
+        },
+      };
+      g["892"] = { class_type: "CLIPTextEncode", inputs: { text: autoPrompt, clip: ["866", 0] } };
+      g["745"] = { class_type: "ConditioningZeroOut", inputs: { conditioning: ["892", 0] } };
+      g["893"] = {
+        class_type: "UltralyticsDetectorProvider",
+        inputs: { model_name: "bbox/face_yolov8m.pt" },
+      };
+      g["899"] = {
+        class_type: "BboxDetectorSEGS",
+        inputs: {
+          bbox_detector: ["893", 0],
+          image: ["663", 0],
+          threshold: 0.5,
+          dilation: 10,
+          crop_factor: 2.2,
+          drop_size: 1,
+          labels: "all",
+        },
+      };
+      g["915"] = {
+        class_type: "ImpactSEGSOrderedFilter",
+        inputs: {
+          segs: ["899", 0],
+          target: "confidence",
+          order: true,
+          take_start: 0,
+          take_count: 1,
+        },
+      };
+      g["887"] = {
+        class_type: "DetailerForEach",
+        inputs: {
+          image: ["663", 0],
+          segs: ["915", 0],
+          model: ["884", 0],
+          clip: ["866", 0],
+          vae: ["869", 0],
+          positive: ["892", 0],
+          negative: ["745", 0],
+          seed: seed,
+          guide_size: 1440,
+          guide_size_for: true,
+          max_size: 1440,
+          steps: 6,
+          cfg: 1,
+          sampler_name: "euler_ancestral",
+          scheduler: "beta",
+          denoise: 0.35,
+          feather: 100,
+          noise_mask: true,
+          force_inpaint: true,
+          wildcard: "",
+          cycle: 1,
+          inpaint_model: false,
+          noise_mask_feather: 20,
+          tiled_encode: false,
+          tiled_decode: false,
+        },
+      };
+      imageRef = ["887", 0];
+    }
+
+    if (manualDetail) {
+      g["707"] = {
+        class_type: "Power Lora Loader (rgthree)",
+        inputs: {
+          model: ["867", 0],
+          PowerLoraLoaderHeaderWidget: { type: "PowerLoraLoaderHeaderWidget" },
+          lora_1: {
+            on: false,
+            lora: "krea2\\MysticXXX_KREA2_v3.safetensors",
+            strength: 0.4,
+            strengthTwo: null,
+          },
+          lora_2: {
+            on: false,
+            lora: "krea2\\moody_girl_krea2_v4_000002500.safetensors",
+            strength: 0.4800048828125001,
+            strengthTwo: null,
+          },
+          lora_3: {
+            on: true,
+            lora: "krea2\\saltaro krea2_pussy_inpainting_lora_v1.0.safetensors",
+            strength: 0.5999999999999999,
+            strengthTwo: null,
+          },
+        },
+      };
+      g["904"] = { class_type: "CLIPTextEncode", inputs: { text: manualPrompt, clip: ["866", 0] } };
+      g["918"] = { class_type: "ConditioningZeroOut", inputs: { conditioning: ["904", 0] } };
+      g["11"] = { class_type: "LoadImage", inputs: { image: maskName } };
+      g["14"] = { class_type: "ImageToMask", inputs: { image: ["11", 0], channel: "red" } };
+      g["900"] = { class_type: "ImpactDilateMask", inputs: { mask: ["14", 0], dilation: 8 } };
+      g["905"] = {
+        class_type: "MaskToSEGS",
+        inputs: {
+          mask: ["900", 0],
+          combined: false,
+          crop_factor: 6.1,
+          bbox_fill: false,
+          drop_size: 10,
+          contour_fill: true,
+        },
+      };
+      g["916"] = {
+        class_type: "DetailerForEach",
+        inputs: {
+          image: imageRef,
+          segs: ["905", 0],
+          model: ["707", 0],
+          clip: ["866", 0],
+          vae: ["869", 0],
+          positive: ["904", 0],
+          negative: ["918", 0],
+          seed: seed,
+          guide_size: 1440,
+          guide_size_for: true,
+          max_size: 1410.9091796875,
+          steps: 8,
+          cfg: 1,
+          sampler_name: "euler_ancestral",
+          scheduler: "beta",
+          denoise: 0.45,
+          feather: 100,
+          noise_mask: true,
+          force_inpaint: true,
+          wildcard: "",
+          cycle: 1,
+          inpaint_model: false,
+          noise_mask_feather: 100,
+          tiled_encode: false,
+          tiled_decode: false,
+        },
+      };
+      imageRef = ["916", 0];
+    }
+
+    // Skin-contrast upscale is bypassed in the source graph, so both blend inputs
+    // are the same image (ImageBlend factor 0.2, normal).
+    g["923"] = {
+      class_type: "ImageBlend",
+      inputs: { image1: imageRef, image2: imageRef, blend_factor: 0.2, blend_mode: "normal" },
+    };
+    g["732"] = {
+      class_type: "SaveImage",
+      inputs: { images: ["923", 0], filename_prefix: savePrefix },
+    };
+
+    if (seedvr) {
+      g["874"] = { class_type: "UpscaleModelLoader", inputs: { model_name: P.upscaler } };
+      g["929"] = {
+        class_type: "SeedVR2LoadDiTModel",
+        inputs: {
+          model: P.dit,
+          device: "cuda:0",
+          blocks_to_swap: 36,
+          swap_io_components: false,
+          offload_device: "cpu",
+          cache_model: false,
+          attention_mode: "sageattn_3",
+        },
+      };
+      g["931"] = {
+        class_type: "SeedVR2LoadVAEModel",
+        inputs: {
+          model: P.svrVae,
+          device: "cuda:0",
+          encode_tiled: true,
+          encode_tile_size: 1024,
+          encode_tile_overlap: 128,
+          decode_tiled: true,
+          decode_tile_size: 1024,
+          decode_tile_overlap: 128,
+          tile_debug: "false",
+          offload_device: "cpu",
+          cache_model: false,
+        },
+      };
+      g["933"] = {
+        class_type: "SeedVR2VideoUpscaler",
+        inputs: {
+          image: ["923", 0],
+          dit: ["929", 0],
+          vae: ["931", 0],
+          seed: 1234567890,
+          resolution: 4096,
+          max_resolution: 4096,
+          batch_size: 1,
+          uniform_batch_size: false,
+          color_correction: "lab",
+          temporal_overlap: 0,
+          prepend_frames: 0,
+          input_noise_scale: 0,
+          latent_noise_scale: 0,
+          offload_device: "cpu",
+          enable_debug: false,
+        },
+      };
+      g["939"] = {
+        class_type: "ImageUpscaleWithModel",
+        inputs: { upscale_model: ["874", 0], image: ["923", 0] },
+      };
+      g["936"] = { class_type: "GetImageSize", inputs: { image: ["933", 0] } };
+      g["938"] = {
+        class_type: "ImageScale",
+        inputs: {
+          image: ["939", 0],
+          upscale_method: "lanczos",
+          width: ["936", 0],
+          height: ["936", 1],
+          crop: "disabled",
+        },
+      };
+      g["934"] = {
+        class_type: "ImageBlend",
+        inputs: {
+          image1: ["933", 0],
+          image2: ["938", 0],
+          blend_factor: 0.4,
+          blend_mode: "normal",
+        },
+      };
+      g["954"] = {
+        class_type: "SaveImage",
+        inputs: { images: ["934", 0], filename_prefix: seedvrPrefix },
+      };
+    }
+
+    return g;
+  }
+
   /**
    * Qwen-Image PHOTOGRAPHY_STYLE NSFW (author defaults: res_2s / bong_tangent / 10 / CFG1 / ~896x1536).
    * No Lightning / NSFW LoRAs. Prompt via TextEncodeQwenImageEditPlus; neg = ConditioningZeroOut.
@@ -599,7 +1036,7 @@
 
   /**
    * @param {object} opts
-   * @param {string} [opts.model] lustify|lustify_i2i|lustify_inpaint|moss|wai|hassaku|krea2svr|photography|moody_v9
+   * @param {string} [opts.model] lustify|lustify_i2i|lustify_inpaint|moss|wai|hassaku|krea2svr|photography|moody_v9|moody_v5
    */
   function buildWorkflow(opts) {
     const model = String((opts && opts.model) || "lustify").toLowerCase();
@@ -608,6 +1045,7 @@
     if (model === "krea2svr") return buildKrea2SeedVR2Workflow(opts || {});
     if (model === "photography") return buildPhotographyWorkflow(opts || {});
     if (model === "moody_v9") return buildMoodyV9Workflow(opts || {});
+    if (model === "moody_v5") return buildMoodyV5Workflow(opts || {});
     if (model === "moss") return buildMossWorkflow(opts || {});
     if (model === "wai") return buildSdxlCheckpointWorkflow(opts || {}, WAI);
     if (model === "hassaku") return buildSdxlCheckpointWorkflow(opts || {}, HASSAKU);
@@ -625,9 +1063,11 @@
     KREA2SVR,
     PHOTOGRAPHY,
     MOODY_V9,
+    MOODY_V5,
     buildKrea2SeedVR2Workflow,
     buildPhotographyWorkflow,
     buildMoodyV9Workflow,
+    buildMoodyV5Workflow,
     buildLustifyImg2ImgWorkflow,
     buildLustifyInpaintWorkflow,
     DEFAULT_NEG: LUSTIFY.neg,

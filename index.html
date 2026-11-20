@@ -862,6 +862,7 @@
     <label for="modelSelect">模型</label>
     <select id="modelSelect" class="notranslate" translate="no">
       <option value="moody_v9">Moody Krea2 典藏版 V9 BF16</option>
+      <option value="moody_v5">Moody Krea2 Simple V5</option>
       <option value="lustify" selected>Lustify Krea Turbo</option>
       <option value="lustify_i2i">Lustify 图生图</option>
       <option value="lustify_inpaint">Lustify 局部重绘</option>
@@ -871,6 +872,35 @@
       <option value="krea2svr">Krea2 + SeedVR2 7B 放大</option>
       <option value="photography">千问 PHOTOGRAPHY</option>
     </select>
+
+    <div id="v5Panel" class="i2i-panel notranslate" hidden translate="no">
+      <p class="png-import-hint">Simple V5：两次采样 + 4x Nomos 平铺放大。SeedVR2、自动重绘、手动重绘默认关闭，与原工作流一致。步数 / CFG 作用于第一次采样（er_sde / beta）。</p>
+      <label class="chk-label" style="margin:8px 0 4px;display:flex">
+        <input type="checkbox" id="v5Seedvr" />
+        SeedVR2 放大（可选，小显卡不建议）
+      </label>
+      <label class="chk-label" style="margin:8px 0 4px;display:flex">
+        <input type="checkbox" id="v5AutoDetail" />
+        自动检测重绘（可选）
+      </label>
+      <div id="v5AutoPromptRow" hidden>
+        <label for="v5AutoPrompt">自动重绘提示词</label>
+        <textarea id="v5AutoPrompt" rows="2"></textarea>
+      </div>
+      <label class="chk-label" style="margin:8px 0 4px;display:flex">
+        <input type="checkbox" id="v5ManualDetail" />
+        手动重绘（可选，需蒙版，白=重画）
+      </label>
+      <div id="v5ManualRow" hidden>
+        <label for="v5ManualPrompt">手动重绘提示词</label>
+        <textarea id="v5ManualPrompt" rows="3"></textarea>
+        <div class="png-import-row" style="margin-top:8px">
+          <label class="btn btn-ghost btn-import" id="btnV5Mask"><span id="btnV5MaskText">选蒙版图</span><input id="v5MaskFile" type="file" accept="image/png,image/jpeg,image/webp,image/*" /></label>
+          <button type="button" class="btn btn-ghost" id="btnClearV5Mask" hidden style="flex:0.45">清除</button>
+        </div>
+        <p class="png-import-hint" id="v5MaskName">未选蒙版</p>
+      </div>
+    </div>
 
     <div id="i2iPanel" class="i2i-panel notranslate" hidden translate="no">
       <p class="png-import-hint" id="i2iHint">图生图：选一张参考图，改提示词后生成。denoise 默认 0.45（越小越像原图）。</p>
@@ -1005,9 +1035,9 @@
   </div>
 
   <script src="png-meta.js?v=boot-20261026e"></script>
-  <script src="workflow.js?v=boot-20261116moody"></script>
+  <script src="workflow.js?v=boot-20261120v5"></script>
   <script src="gallery.js?v=boot-20261026e"></script>
-  <script src="app.js?v=boot-20261117port"></script>
+  <script src="app.js?v=boot-20261120v5"></script>
 
   <script>
     function googleTranslateElementInit() {

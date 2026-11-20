@@ -49,6 +49,7 @@
   let i2iImageFile = null;
   let i2iMaskFile = null;
   let i2iPreviewUrl = null;
+  let v5MaskFile = null;
 
 
   /**
@@ -618,6 +619,27 @@
     return data.prompt_id;
   }
 
+  /** Prefer a real SaveImage. When Simple V5 also saves a SeedVR2 pass, use that file. */
+  function pickOutputImage(outputs) {
+    const all = [];
+    const keys = Object.keys(outputs || {});
+    for (let i = 0; i < keys.length; i++) {
+      const imgs = outputs[keys[i]] && outputs[keys[i]].images;
+      if (!imgs || !imgs.length) continue;
+      for (let j = 0; j < imgs.length; j++) all.push(imgs[j]);
+    }
+    if (!all.length) return null;
+    const finals = [];
+    for (let i = 0; i < all.length; i++) {
+      if ((all[i].type || "output") === "output") finals.push(all[i]);
+    }
+    const pool = finals.length ? finals : all;
+    for (let i = pool.length - 1; i >= 0; i--) {
+      if (/SEEDVR/i.test(String(pool[i].filename || ""))) return pool[i];
+    }
+    return pool[pool.length - 1];
+  }
+
   async function pollHistory(promptId, onTick) {
     const maxTries = 600;
     for (let i = 0; i < maxTries; i++) {
@@ -645,11 +667,8 @@
             .join("; ");
           throw new Error((msgs || "error").slice(0, 180));
         }
-        const outputs = entry.outputs || {};
-        for (const key of Object.keys(outputs)) {
-          const imgs = outputs[key].images || [];
-          if (imgs.length) return imgs[0];
-        }
+        const picked = pickOutputImage(entry.outputs || {});
+        if (picked) return picked;
         if (st.completed) {
           await sleep(500);
           continue;
@@ -3686,12 +3705,75 @@
     }
     applyModelPreset(sel.value, { fillEmptyNeg: !($("negative") && ($("negative").value || "").trim()) });
     syncI2iPanel(sel.value);
+    syncV5Panel(sel.value);
     sel.addEventListener("change", function () {
       localStorage.setItem(LS_MODEL, sel.value);
       applyModelPreset(sel.value, { fillEmptyNeg: true });
       syncI2iPanel(sel.value);
+      syncV5Panel(sel.value);
       setStatus("已切到 " + (sel.options[sel.selectedIndex].text || sel.value) + " · 参数已按默认填入", "ok");
     });
+  }
+
+  function fillV5PromptIfEmpty(id, text) {
+    const el = $(id);
+    if (!el || (el.value || "").trim() || !text) return;
+    el.value = text;
+  }
+
+  function syncV5Panel(modelId) {
+    const on = String(modelId || "").toLowerCase() === "moody_v5";
+    setElHidden($("v5Panel"), !on);
+    if (!on) return;
+    const W = window.ComfyPhoneWorkflow;
+    const preset = W && W.getPreset ? W.getPreset("moody_v5") : null;
+    if (preset) {
+      fillV5PromptIfEmpty("v5AutoPrompt", preset.autoDetailPrompt);
+      fillV5PromptIfEmpty("v5ManualPrompt", preset.manualDetailPrompt);
+    }
+    setElHidden($("v5AutoPromptRow"), !($("v5AutoDetail") && $("v5AutoDetail").checked));
+    setElHidden($("v5ManualRow"), !($("v5ManualDetail") && $("v5ManualDetail").checked));
+  }
+
+  function bindV5Panel() {
+    function remember(id, key) {
+      const el = $(id);
+      if (!el || el.dataset.bound) return;
+      el.dataset.bound = "1";
+      const saved = localStorage.getItem(key);
+      if (saved === "1") el.checked = true;
+      if (saved === "0") el.checked = false;
+      el.addEventListener("change", function () {
+        localStorage.setItem(key, el.checked ? "1" : "0");
+        syncV5Panel(currentModelId());
+      });
+    }
+    remember("v5Seedvr", "comfy_phone_v5_seedvr");
+    remember("v5AutoDetail", "comfy_phone_v5_auto");
+    remember("v5ManualDetail", "comfy_phone_v5_manual");
+    const maskInput = $("v5MaskFile");
+    if (maskInput && !maskInput.dataset.bound) {
+      maskInput.dataset.bound = "1";
+      maskInput.addEventListener("change", function () {
+        const f = maskInput.files && maskInput.files[0];
+        v5MaskFile = f || null;
+        const nameEl = $("v5MaskName");
+        const clearBtn = $("btnClearV5Mask");
+        if (nameEl) nameEl.textContent = v5MaskFile ? ("已选: " + (v5MaskFile.name || "mask")) : "未选蒙版";
+        if (clearBtn) clearBtn.hidden = !v5MaskFile;
+      });
+    }
+    const clearMask = $("btnClearV5Mask");
+    if (clearMask && !clearMask.dataset.bound) {
+      clearMask.dataset.bound = "1";
+      clearMask.addEventListener("click", function () {
+        v5MaskFile = null;
+        if (maskInput) maskInput.value = "";
+        const nameEl = $("v5MaskName");
+        if (nameEl) nameEl.textContent = "未选蒙版";
+        clearMask.hidden = true;
+      });
+    }
   }
 
   async function generate() {
@@ -3740,6 +3822,11 @@
     }
     if (!Number.isFinite(cfg) || cfg <= 0) cfg = cfgDefault;
     if ($("cfg")) $("cfg").value = String(cfg);
+
+    if (!useImportedApi && modelId === "moody_v5" && $("v5ManualDetail") && $("v5ManualDetail").checked && !v5MaskFile) {
+      setStatus("手动重绘需要蒙版图（白=重画）", "err");
+      return;
+    }
 
     if (!useImportedApi && modelNeedsImage(modelId)) {
       if (!i2iImageFile) {
@@ -3840,6 +3927,23 @@
               buildOpts.maskName = await uploadImageToComfy(
                 i2iMaskFile,
                 "phone_mask_" + seed + "_" + (i2iMaskFile.name || "mask.png")
+              );
+            }
+          }
+          if (modelId === "moody_v5") {
+            buildOpts.seedvr = !!($("v5Seedvr") && $("v5Seedvr").checked);
+            buildOpts.autoDetail = !!($("v5AutoDetail") && $("v5AutoDetail").checked);
+            buildOpts.manualDetail = !!($("v5ManualDetail") && $("v5ManualDetail").checked);
+            if (buildOpts.autoDetail) {
+              buildOpts.autoDetailPrompt = ($("v5AutoPrompt") && $("v5AutoPrompt").value) || "";
+            }
+            if (buildOpts.manualDetail) {
+              buildOpts.manualDetailPrompt = ($("v5ManualPrompt") && $("v5ManualPrompt").value) || "";
+              if (!v5MaskFile) throw new Error("手动重绘需要蒙版图（白=重画）");
+              setStatus("上传蒙版… " + (n + 1) + "/" + batch, "run");
+              buildOpts.maskName = await uploadImageToComfy(
+                v5MaskFile,
+                "phone_v5_mask_" + seed + "_" + (v5MaskFile.name || "mask.png")
               );
             }
           }
@@ -4667,6 +4771,7 @@
     showPage("boot");
     bindPngImport();
     bindI2iPanel();
+    bindV5Panel();
     initModelSelect();
     $("btnGen").addEventListener("click", generate);
     if ($("btnCancel")) $("btnCancel").addEventListener("click", cancelTask);
