@@ -885,7 +885,7 @@
       </label>
       <div id="v5AutoPromptRow" hidden>
         <label for="v5AutoPrompt">自动重绘提示词</label>
-        <textarea id="v5AutoPrompt" rows="2"></textarea>
+        <textarea id="v5AutoPrompt" rows="2" placeholder="不填则与主提示词相同"></textarea>
       </div>
       <label class="chk-label" style="margin:8px 0 4px;display:flex">
         <input type="checkbox" id="v5ManualDetail" />
@@ -893,7 +893,7 @@
       </label>
       <div id="v5ManualRow" hidden>
         <label for="v5ManualPrompt">手动重绘提示词</label>
-        <textarea id="v5ManualPrompt" rows="3"></textarea>
+        <textarea id="v5ManualPrompt" rows="3" placeholder="不填则与主提示词相同"></textarea>
         <div class="png-import-row" style="margin-top:8px">
           <label class="btn btn-ghost btn-import" id="btnV5Mask"><span id="btnV5MaskText">选蒙版图</span><input id="v5MaskFile" type="file" accept="image/png,image/jpeg,image/webp,image/*" /></label>
           <button type="button" class="btn btn-ghost" id="btnClearV5Mask" hidden style="flex:0.45">清除</button>
@@ -1035,9 +1035,9 @@
   </div>
 
   <script src="png-meta.js?v=boot-20261026e"></script>
-  <script src="workflow.js?v=boot-20261120v5"></script>
+  <script src="workflow.js?v=boot-20261120v5prompt"></script>
   <script src="gallery.js?v=boot-20261026e"></script>
-  <script src="app.js?v=boot-20261120v5"></script>
+  <script src="app.js?v=boot-20261120v5prompt"></script>
 
   <script>
     function googleTranslateElementInit() {

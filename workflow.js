@@ -118,8 +118,6 @@
     upscaler: "4xNomosWebPhoto_RealPLKSR.pth",
     dit: "seedvr2_ema_7b_sharp_fp16.safetensors",
     svrVae: "ema_vae_fp16.safetensors",
-    autoDetailPrompt: "Person， yanni, cute girl",
-    manualDetailPrompt: "close-up, labia spread open by both hands, clitoris visible, urethral opening visible, vaginal opening visible, frontal view",
     defaults: { steps: 8, cfg: 1.0, width: 840, height: 1256, sampler: "er_sde", scheduler: "beta" },
     neg: "",
   };
@@ -498,8 +496,8 @@
     const manualDetail = opts.manualDetail === true;
     const maskName = String(opts.maskName || "").trim();
     if (manualDetail && !maskName) throw new Error("手动重绘需要蒙版图（白=重画）");
-    const autoPrompt = String(opts.autoDetailPrompt || "").trim() || P.autoDetailPrompt;
-    const manualPrompt = String(opts.manualDetailPrompt || "").trim() || P.manualDetailPrompt;
+    const autoPrompt = String(opts.autoDetailPrompt || "").trim() || text;
+    const manualPrompt = String(opts.manualDetailPrompt || "").trim() || text;
     const stamped = opts.now instanceof Date ? opts.now : new Date();
     const savePrefix = expandComfyDatePrefix("image/%date:yyyy-MM-dd%/Krea2-%date:hhmmss%", stamped);
     const seedvrPrefix = expandComfyDatePrefix("image/%date:yyyy-MM-dd%/Krea2-SEEDVR-%date:hhmmss%", stamped);
