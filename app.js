@@ -3715,22 +3715,10 @@
     });
   }
 
-  function fillV5PromptIfEmpty(id, text) {
-    const el = $(id);
-    if (!el || (el.value || "").trim() || !text) return;
-    el.value = text;
-  }
-
   function syncV5Panel(modelId) {
     const on = String(modelId || "").toLowerCase() === "moody_v5";
     setElHidden($("v5Panel"), !on);
     if (!on) return;
-    const W = window.ComfyPhoneWorkflow;
-    const preset = W && W.getPreset ? W.getPreset("moody_v5") : null;
-    if (preset) {
-      fillV5PromptIfEmpty("v5AutoPrompt", preset.autoDetailPrompt);
-      fillV5PromptIfEmpty("v5ManualPrompt", preset.manualDetailPrompt);
-    }
     setElHidden($("v5AutoPromptRow"), !($("v5AutoDetail") && $("v5AutoDetail").checked));
     setElHidden($("v5ManualRow"), !($("v5ManualDetail") && $("v5ManualDetail").checked));
   }
