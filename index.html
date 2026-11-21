@@ -874,7 +874,7 @@
     </select>
 
     <div id="v5Panel" class="i2i-panel notranslate" hidden translate="no">
-      <p class="png-import-hint">Simple V5：两次采样 + 4x Nomos 平铺放大。SeedVR2、自动重绘、手动重绘默认关闭，与原工作流一致。步数 / CFG 作用于第一次采样（er_sde / beta）。</p>
+      <p class="png-import-hint">Simple V5：初始 640×960，第一次采样 30 步 / CFG 1（er_sde / beta）。潜空间 ×1.7 后再采样，SD 放大 ×2，默认成图 2176×3264。皮肤对比默认打开。SeedVR2、自动重绘、手动重绘默认关闭。步数 / CFG 只作用于第一次采样。下面的宽和高是初始大小。</p>
       <label class="chk-label" style="margin:8px 0 4px;display:flex">
         <input type="checkbox" id="v5Seedvr" />
         SeedVR2 放大（可选，小显卡不建议）
@@ -960,6 +960,7 @@
         <input id="height" type="number" min="64" max="4096" step="8" value="2560" />
       </div>
     </div>
+    <p class="png-import-hint" id="v5SizeHint" hidden></p>
 
     <label for="seed">种子（空则随机；多张时每张 +1）</label>
     <div class="seed-row">
@@ -1035,9 +1036,9 @@
   </div>
 
   <script src="png-meta.js?v=boot-20261026e"></script>
-  <script src="workflow.js?v=boot-20261120v5"></script>
+  <script src="workflow.js?v=boot-20261121v5"></script>
   <script src="gallery.js?v=boot-20261026e"></script>
-  <script src="app.js?v=boot-20261120v5"></script>
+  <script src="app.js?v=boot-20261121v5"></script>
 
   <script>
     function googleTranslateElementInit() {

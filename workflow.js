@@ -105,10 +105,11 @@
     neg: "",
   };
 
-  // Source graph: workflows/Moody_Krea2_Simple_V5.json (litegraph, already patched).
-  // ResolutionSelector "2:3 (Portrait Photo)" / 1MP / multiple 8 → 840×1256.
+  // Source graph: workflows/Moody_Krea2_Simple_V5.json.
+  // EmptyLatentImage is the base (640×960). ResolutionSelector (2:3 / 2.8 MP) has no links.
+  // Final pixels = round(base/8 × 1.7) × 8 × 2 → 2176×3264 at the default.
   // Checkpoint is on models/checkpoints. CLIP type krea2. VAE unchanged.
-  // SeedVR2 weights + 4xNomosWebPhoto_RealPLKSR.pth are on the Beijing shared disk.
+  // Skin contrast model stays the graph filename. SeedVR2 weights + 4x Nomos are on the shared disk.
   const MOODY_V5 = {
     id: "moody_v5",
     label: "Moody Krea2 Simple V5",
@@ -116,11 +117,14 @@
     clip: "qwen3vl_4b_bf16.safetensors",
     vae: "qwen_image_vae.safetensors",
     upscaler: "4xNomosWebPhoto_RealPLKSR.pth",
+    skin: "1xSkinContrast-High-SuperUltraCompact.pth",
+    latentScale: 1.7,
+    sdScale: 2,
     dit: "seedvr2_ema_7b_sharp_fp16.safetensors",
     svrVae: "ema_vae_fp16.safetensors",
     autoDetailPrompt: "Person， yanni, cute girl",
     manualDetailPrompt: "close-up, labia spread open by both hands, clitoris visible, urethral opening visible, vaginal opening visible, frontal view",
-    defaults: { steps: 8, cfg: 1.0, width: 840, height: 1256, sampler: "er_sde", scheduler: "beta" },
+    defaults: { steps: 30, cfg: 1.0, width: 640, height: 960, sampler: "er_sde", scheduler: "beta" },
     neg: "",
   };
 
@@ -474,13 +478,35 @@
   }
 
   /**
+   * Pixel size after LatentUpscaleBy (scale on the latent grid) and UltimateSDUpscale.
+   * Default 640×960 → latent 1088×1632 → final 2176×3264.
+   */
+  function moodyV5OutputSize(width, height) {
+    const P = MOODY_V5;
+    const w = Math.max(64, Math.round((Number(width) || P.defaults.width) / 8) * 8);
+    const h = Math.max(64, Math.round((Number(height) || P.defaults.height) / 8) * 8);
+    const latW = Math.max(1, Math.round((w / 8) * P.latentScale));
+    const latH = Math.max(1, Math.round((h / 8) * P.latentScale));
+    return {
+      width: w,
+      height: h,
+      latentWidth: latW * 8,
+      latentHeight: latH * 8,
+      finalWidth: latW * 8 * P.sdScale,
+      finalHeight: latH * 8 * P.sdScale,
+    };
+  }
+
+  /**
    * Moody Krea2 Simple Workflow V5 as a Comfy API prompt.
    * Node ids match workflows/Moody_Krea2_Simple_V5.json.
    * Bypassed nodes (mode 4) are left out, the same way Comfy queues that graph:
-   * LatentUpscaleBy, both DetailerForEach, skin ImageUpscaleWithModel, and the SeedVR2 group.
+   * both DetailerForEach and the SeedVR2 group.
    * opts.seedvr / opts.autoDetail / opts.manualDetail put those optional branches back.
+   * LatentUpscaleBy (1.7, bicubic) and the skin-contrast upscale are enabled.
    * Virtual nodes (Set/Get, Reroute, Seed rgthree, notes, comparers, bypassers) are resolved away.
    * Second KSampler denoise stays 0, as stored on node 842.
+   * CLIPTextEncode uses the page prompt, not the sample text stored on node 627.
    */
   function buildMoodyV5Workflow(opts) {
     const P = MOODY_V5;
@@ -490,9 +516,9 @@
     const steps = Number(opts.steps) || P.defaults.steps;
     const cfg = opts.cfg != null && opts.cfg !== "" ? Number(opts.cfg) : P.defaults.cfg;
     const seed = Number.isFinite(Number(opts.seed)) ? Math.round(Number(opts.seed)) : 0;
-    const width = Math.max(64, Math.round((Number(opts.width) || P.defaults.width) / 8) * 8);
-    const height = Math.max(64, Math.round((Number(opts.height) || P.defaults.height) / 8) * 8);
-    const useSelector = width === P.defaults.width && height === P.defaults.height;
+    const size = moodyV5OutputSize(opts.width, opts.height);
+    const width = size.width;
+    const height = size.height;
     const seedvr = opts.seedvr === true;
     const autoDetail = opts.autoDetail === true;
     const manualDetail = opts.manualDetail === true;
@@ -556,8 +582,16 @@
           scheduler: "beta",
           positive: ["627", 0],
           negative: ["763", 0],
-          latent_image: ["599", 0],
+          latent_image: ["647", 0],
           denoise: 0,
+        },
+      },
+      "647": {
+        class_type: "LatentUpscaleBy",
+        inputs: {
+          samples: ["599", 0],
+          upscale_method: "bicubic",
+          scale_by: P.latentScale,
         },
       },
       "609": { class_type: "VAEDecode", inputs: { samples: ["599", 0], vae: ["869", 0] } },
@@ -573,7 +607,7 @@
         },
       },
       "644": { class_type: "UpscaleModelLoader", inputs: { model_name: P.upscaler } },
-      "637": { class_type: "FloatConstant", inputs: { value: 2.5 } },
+      "637": { class_type: "FloatConstant", inputs: { value: P.sdScale } },
       "618": { class_type: "GetImageSize", inputs: { image: ["832", 0] } },
       "630": {
         class_type: "SimpleMath+",
@@ -615,21 +649,10 @@
       },
     };
 
-    if (useSelector) {
-      g["850"] = {
-        class_type: "ResolutionSelector",
-        inputs: { aspect_ratio: "2:3 (Portrait Photo)", megapixels: 1, multiple: 8 },
-      };
-      g["698"] = {
-        class_type: "EmptyLatentImage",
-        inputs: { width: ["850", 0], height: ["850", 1], batch_size: 1 },
-      };
-    } else {
-      g["698"] = {
-        class_type: "EmptyLatentImage",
-        inputs: { width: width, height: height, batch_size: 1 },
-      };
-    }
+    g["698"] = {
+      class_type: "EmptyLatentImage",
+      inputs: { width: width, height: height, batch_size: 1 },
+    };
 
     if (neg) g["763"] = { class_type: "CLIPTextEncode", inputs: { text: neg, clip: ["866", 0] } };
     else g["763"] = { class_type: "ConditioningZeroOut", inputs: { conditioning: ["627", 0] } };
@@ -780,11 +803,23 @@
       imageRef = ["916", 0];
     }
 
-    // Skin-contrast upscale is bypassed in the source graph, so both blend inputs
-    // are the same image (ImageBlend factor 0.2, normal).
+    // Skin contrast is enabled: 1x model into ImageBlend image2, SaveImage takes the blend.
+    g["924"] = {
+      class_type: "UpscaleModelLoader",
+      inputs: { model_name: P.skin },
+    };
+    g["925"] = {
+      class_type: "ImageUpscaleWithModel",
+      inputs: { upscale_model: ["924", 0], image: imageRef },
+    };
     g["923"] = {
       class_type: "ImageBlend",
-      inputs: { image1: imageRef, image2: imageRef, blend_factor: 0.2, blend_mode: "normal" },
+      inputs: {
+        image1: imageRef,
+        image2: ["925", 0],
+        blend_factor: 0.2,
+        blend_mode: "normal",
+      },
     };
     g["732"] = {
       class_type: "SaveImage",
@@ -828,8 +863,8 @@
           dit: ["929", 0],
           vae: ["931", 0],
           seed: 1234567890,
-          resolution: 4096,
-          max_resolution: 4096,
+          resolution: Math.min(size.finalWidth, size.finalHeight),
+          max_resolution: Math.max(size.finalWidth, size.finalHeight),
           batch_size: 1,
           uniform_batch_size: false,
           color_correction: "lab",
@@ -1068,6 +1103,7 @@
     buildPhotographyWorkflow,
     buildMoodyV9Workflow,
     buildMoodyV5Workflow,
+    moodyV5OutputSize,
     buildLustifyImg2ImgWorkflow,
     buildLustifyInpaintWorkflow,
     DEFAULT_NEG: LUSTIFY.neg,
