@@ -3336,6 +3336,7 @@
     if (params.seed != null && Number.isFinite(Number(params.seed))) {
       $("seed").value = String(Math.round(Number(params.seed)));
     }
+    syncV5SizeHint();
   }
 
   async function handlePngImportFile(file) {
@@ -3683,6 +3684,7 @@
     if ($("width")) $("width").value = String(d.width);
     if ($("height")) $("height").value = String(d.height);
     if ($("cfg") && d.cfg != null) $("cfg").value = String(d.cfg);
+    syncV5SizeHint();
     if ($("negative") && (fillEmptyNeg || !($("negative").value || "").trim())) {
       $("negative").value = preset.neg || "";
       $("negative").placeholder = preset.neg
@@ -3733,6 +3735,27 @@
     }
     setElHidden($("v5AutoPromptRow"), !($("v5AutoDetail") && $("v5AutoDetail").checked));
     setElHidden($("v5ManualRow"), !($("v5ManualDetail") && $("v5ManualDetail").checked));
+    syncV5SizeHint();
+  }
+
+  function syncV5SizeHint() {
+    const el = $("v5SizeHint");
+    if (!el) return;
+    const on = currentModelId() === "moody_v5";
+    el.hidden = !on;
+    if (!on) {
+      el.textContent = "";
+      return;
+    }
+    const W = window.ComfyPhoneWorkflow;
+    if (!W || !W.moodyV5OutputSize) return;
+    const s = W.moodyV5OutputSize(
+      Number($("width") && $("width").value),
+      Number($("height") && $("height").value)
+    );
+    el.textContent =
+      "成图 " + s.finalWidth + "×" + s.finalHeight +
+      "（初始 " + s.width + "×" + s.height + " ×1.7 潜空间 ×2 SD）";
   }
 
   function bindV5Panel() {
@@ -3751,6 +3774,12 @@
     remember("v5Seedvr", "comfy_phone_v5_seedvr");
     remember("v5AutoDetail", "comfy_phone_v5_auto");
     remember("v5ManualDetail", "comfy_phone_v5_manual");
+    ["width", "height"].forEach(function (id) {
+      const el = $(id);
+      if (!el || el.dataset.v5size) return;
+      el.dataset.v5size = "1";
+      el.addEventListener("input", syncV5SizeHint);
+    });
     const maskInput = $("v5MaskFile");
     if (maskInput && !maskInput.dataset.bound) {
       maskInput.dataset.bound = "1";
@@ -3970,6 +3999,13 @@
         setStatus("拉取图片… " + (n + 1) + "/" + batch, "run");
         const { blob, filename } = await fetchImageBlob(imgInfo);
         showImage(blob, filename);
+        let saveW = width;
+        let saveH = height;
+        if (!useImportedApi && modelId === "moody_v5" && W.moodyV5OutputSize) {
+          const sz = W.moodyV5OutputSize(width, height);
+          saveW = sz.finalWidth;
+          saveH = sz.finalHeight;
+        }
         await saveToGallery({
           blob,
           filename,
@@ -3977,8 +4013,8 @@
           comfyType: (imgInfo && imgInfo.type) || "output",
           prompt,
           seed,
-          width,
-          height,
+          width: saveW,
+          height: saveH,
           steps,
           createdAt: Date.now(),
         });
